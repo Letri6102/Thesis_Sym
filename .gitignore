@@ -1,0 +1,46 @@
+# ===== Data — giữ trên Google Drive (MyDrive/Sym) =====
+/img/
+/ActionUnit_Labels/
+/DISFA/
+data/
+
+# ===== Kết quả chạy — giữ trên Drive =====
+/runs/
+/runs_retry1/
+/runs_swin_probe/
+/failed_runs/
+/logs/
+/reports/
+/splits/
+/stage2_out/
+/output/
+downstream/
+colab-environment.txt
+
+# ===== Trọng số, mảng lớn, file nén =====
+*.pt
+*.pth
+*.ckpt
+*.npz
+*.zip
+*.tar
+*.tar.gz
+checkpoints/
+
+# ===== Dự án khác, không thuộc luận văn =====
+/SmartPLS-HomeMake/
+
+# ===== Môi trường, cache, file tạm =====
+.venv*/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ipynb_checkpoints/
+tmp/
+.claude/
+*.bak_*
+*.bak
+Thumbs.db
+desktop.ini
+.DS_Store

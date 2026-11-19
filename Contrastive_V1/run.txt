@@ -1,0 +1,40 @@
+python -c "import torch; print('Torch:', torch.__version__, '| CUDA available:', torch.cuda.is_available(), '| Device:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU', '| Built CUDA:', torch.version.cuda)"
+
+
+python .\train_stage1.py --dataset DISFA --arc resnet50 --exp-name resnet50_first_stage -b 64 -lr 0.0001 --fold 1
+python .\train_stage1.py --dataset DISFA --arc resnet50 --exp-name resnet50_first_stage -b 64 -lr 0.0001 --fold 2
+python .\train_stage1.py --dataset DISFA --arc resnet50 --exp-name resnet50_first_stage -b 64 -lr 0.0001 --fold 3
+
+python .\train_stage2.py --dataset DISFA --arc resnet50 --exp-name resnet50_second_stage  --resume results/resnet50_first_stage/bs_64_seed_0_lr_0.0001/epoch20_model_fold1.pth --lam 0.05 --fold 1
+python .\train_stage2.py --dataset DISFA --arc resnet50 --exp-name resnet50_second_stage  --resume results/resnet50_first_stage/bs_64_seed_0_lr_0.0001/epoch20_model_fold2.pth --lam 0.05 --fold 2
+python .\train_stage2.py --dataset DISFA --arc resnet50 --exp-name resnet50_second_stage  --resume results/resnet50_first_stage/bs_64_seed_0_lr_0.0001/epoch20_model_fold3.pth --lam 0.05 --fold 3
+
+python .\test.py --dataset DISFA --arc resnet50 --exp-name test_fold1  --resume results/pre-trained/MEFARG_resnet50_DISFA_fold1.pth --fold 1
+python .\test.py --dataset DISFA --arc resnet50 --exp-name test_fold2  --resume results/pre-trained/MEFARG_resnet50_DISFA_fold2.pth --fold 2
+python .\test.py --dataset DISFA --arc resnet50 --exp-name test_fold3  --resume results/pre-trained/MEFARG_resnet50_DISFA_fold3.pth --fold 3
+
+python .\test.py --dataset DISFA --arc resnet50 --exp-name test_fold2  --resume results\resnet50_second_stage\bs_64_seed_0_lr_1e-05\epoch8_model_fold3.pth --fold 2
+
+D:\NhomKL_AU_Emo\ME-GraphAU\results\resnet50_second_stage\bs_64_seed_0_lr_1e-05\epoch8_model_fold3.pth
+
+
+# conda deactivate
+# .\.venv\Scripts\activate
+# .\.venv\Scripts\deactivate
+
+
+python .\train_Sym_Stage_1.py --dataset DISFA --arc resnet50 --exp-name resnet50_first_stage -b 64 -lr 0.0001 --fold 2
+
+python .\train_Sym_Stage_2.py --dataset DISFA --arc resnet50 --exp-name resnet50_second_stage -b 64 -lr 0.01 --epochs 16 --resume results/resnet50_first_stage/bs_64_seed_0_lr_0.0001/best_model_fold2.pth --fold 2 
+
+python .\train_Sym_Stage_3.py --dataset DISFA --arc resnet50 --fold 2 -b 64 -lr 1e-5 --exp-name sym_stage3_fold2 --resume results/resnet50_first_stage/bs_64_seed_0_lr_0.0001/best_model_fold2.pth --resume-phase2 results/resnet50_second_stage/bs_64_seed_0_lr_0.001/best_model_phase2_fold2.pth
+
+
+python .\visualize_logic_space_phase2.py --dataset DISFA --root data/DISFA --arc resnet50 --fold 2 --crop-size 224 --stage1_ckpt results/resnet50_first_stage/bs_64_seed_0_lr_0.0001/best_model_fold2.pth --phase2_ckpt results/resnet50_second_stage/bs_64_seed_0_lr_0.0001/best_model_phase2_fold2.pth --num-samples 3000 --save logic_multipanel_fold2.png --val2 0
+
+python .\test.py --dataset DISFA --arc resnet50 --exp-name test_fold2  --resume results/resnet50_first_stage/bs_64_seed_0_lr_0.0001/best_model_fold2.pth --fold 2
+
+
+## Swin
+
+python .\train_Sym_Stage_1.py --dataset DISFA --arc swin_transformer_base --exp-name swin_first_stage -b 64 -lr 0.0001 --fold 2

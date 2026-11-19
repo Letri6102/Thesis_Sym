@@ -1,0 +1,11 @@
+data/
+OpenGraphAU/
+results/
+img/
+checkpoints/
+
+context/
+
+
+.venv39/
+.venv/

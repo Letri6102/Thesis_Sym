@@ -1,0 +1,7 @@
+# Keep Colab's matching torch/torchvision CUDA pair. Do not pip install 'pysat'.
+timm==1.0.22
+easydict==1.13
+PyYAML==6.0.2
+tqdm==4.67.1
+python-sat==1.8.dev24
+pytest==8.4.2

@@ -1,0 +1,74 @@
+Hướng dẫn sửa Phase 2
+Có 2 file cần sửa, tổng cộng 4 chỗ.
+
+File 1: train_Sym_Stage_2.py
+Tìm hàm logic_triplet_loss (khoảng line 734) và thay toàn bộ:
+
+
+# XÓA ĐOẠN NÀY:
+def logic_triplet_loss(z_cnf, z_s, z_us, margin=1.0):
+    """
+    Triplet loss kiểu chuẩn:
+        L = mean( max(0, margin + d_s - d_us) )
+    d_s  = ||z_cnf - z_s||^2
+    d_us = ||z_cnf - z_us||^2
+    """
+    d_s = ((z_cnf - z_s) ** 2).sum(dim=1)
+    d_us = ((z_cnf - z_us) ** 2).sum(dim=1)
+    return F.relu(margin + d_s - d_us).mean()
+
+# THAY BẰNG:
+def logic_triplet_loss(z_cnf, z_s, z_us):
+    """
+    Eq. (14) từ paper SymGraphAU:
+        L_h = Σ ‖d_s‖² − Σ 1_{d_s > d_us} · ‖d_us‖²
+
+    Term 1: luôn kéo G_cnf gần G_s (attractive, không margin)
+    Term 2: chỉ đẩy G_cnf xa G_us khi d_s > d_us (hard-mining indicator)
+    """
+    d_s = ((z_cnf - z_s) ** 2).sum(dim=1)    # (B,)
+    d_us = ((z_cnf - z_us) ** 2).sum(dim=1)  # (B,)
+    indicator = (d_s > d_us).float()
+    return d_s.mean() - (indicator * d_us).mean()
+Sau đó tìm 2 chỗ gọi hàm này (khoảng line 831 và line 957), sửa cả hai:
+
+
+# XÓA:
+L_h = logic_triplet_loss(z_cnf, z_s, z_us, margin=margin_h)
+
+# THAY BẰNG:
+L_h = logic_triplet_loss(z_cnf, z_s, z_us)
+File 2: visualize_logic_space_phase2.py
+Sửa 1 — Trong hàm evaluate_phase2, tìm dòng gọi logic_triplet_loss:
+
+
+# XÓA:
+L_h = logic_triplet_loss(z_cnf, z_s, z_us, margin=margin_h)
+
+# THAY BẰNG:
+L_h = logic_triplet_loss(z_cnf, z_s, z_us)
+Sửa 2 — Ngay bên dưới đó, tìm dòng tính triplet_sat:
+
+
+# XÓA:
+triplet_sat = (d_us > d_s + margin_h).float().mean()
+
+# THAY BẰNG:
+triplet_sat = (d_us > d_s).float().mean()
+Sửa 3 — Trong hàm plot_tsne_multi_panel, tìm dòng r2 = 0.1:
+
+
+# XÓA:
+r2 = 0.1
+
+# THAY BẰNG:
+r2 = max(0.05, np.linalg.norm(sat_c - uns_xy.mean(axis=0)) * 0.1)
+Lý do sửa (gửi kèm để người nhận hiểu)
+
+
+Chỗ sửa	Lý do
+logic_triplet_loss trong train_Sym_Stage_2.py	Code cũ dùng standard triplet với margin=1.0, sai so với Eq. (14) của paper. Paper dùng 2 terms tách biệt: Term 1 luôn kéo G_cnf về G_s, Term 2 chỉ đẩy xa G_us khi model đang nhầm (d_s > d_us). Không có margin.
+2 call-site margin=margin_h trong train_Sym_Stage_2.py	Hàm đã bỏ tham số margin, giữ lại sẽ crash TypeError.
+logic_triplet_loss(..., margin=margin_h) trong visualize_	Cùng lý do — sẽ crash khi chạy --val2 1.
+triplet_sat metric	Metric cũ đo d_us > d_s + 1.0 (chuẩn margin cũ). Sau khi fix loss, metric đúng là d_us > d_s (không margin).
+r2 = 0.1	Bán kính cố định có thể cho Panel 5 trống hoặc quá rộng tùy dataset. Đổi sang động theo khoảng cách thực tế.

@@ -1,0 +1,12 @@
+# torch/torchvision cài riêng theo CUDA của máy (xem setup_env.sh)
+numpy<2
+pandas
+pillow
+tqdm
+pyyaml
+easydict
+timm>=0.9,<1.1
+scikit-learn
+matplotlib
+# chỉ cần nếu còn chạy train_Sym_Stage_2.py cũ (tên pip là python-sat, KHÔNG phải pysat)
+python-sat
