@@ -21,6 +21,8 @@ Kế hoạch nghiên cứu và trạng thái hiện tại nằm ở [De_cuong_ng
 
 **Không sửa code trực tiếp trong `/content/Thesis_Sym`:** lần chạy cell Setup sau sẽ xoá hết.
 
+**Claude được phép tự commit và push lên `main`** mỗi khi một thay đổi cần có trên Colab, không phải hỏi trước (chủ dự án cho phép ngày 20/11). Vẫn phải chạy `pytest` trước khi push, không force-push, và cảnh báo trước nếu thay đổi chạm vào file bị hash (mục 3).
+
 ## 3. Ràng buộc resume — dễ làm hỏng run
 
 `train_contrastive.py` lưu vào `config` của mỗi run:

@@ -101,26 +101,45 @@ def run_logged(cmd, name):
 
 ## A. Đóng gói ảnh thành `DISFA_img.tar` — chạy MỘT lần, không cần GPU
 
-Đọc 130.814 ảnh từ Drive (16 luồng, mỗi ảnh thử lại tối đa 5 lần), ghi tar không nén ra `/content`, kiểm đủ số ảnh, rồi mới chép lên Drive. File chép lên mang tên `.partial` và chỉ được đổi tên khi chép xong, nên cell Setup không bao giờ dùng nhầm một file dở dang.
+Cell này không cần cell Setup và không cần token GitHub. Các bước:
+1. đọc 130.814 ảnh từ Drive bằng 16 luồng, mỗi ảnh thử lại tối đa 5 lần;
+2. ghi tar không nén ra `/content` và kiểm đủ số ảnh;
+3. chép lên Drive dưới tên `.partial`, đổi tên khi chép xong (cell Setup không bao giờ dùng nhầm file dở dang);
+4. `flush_and_unmount` để chờ Drive đồng bộ xong.
+
 Nên chọn runtime **CPU** để khỏi tốn GPU. Mất khoảng 1–3 giờ. Nếu phiên bị ngắt thì chạy lại từ đầu.
+**Đừng tắt tab** trước khi cell in dòng `XONG`.
 
 ```python
+# ==== Cell A: đóng gói MyDrive/Sym/DISFA/img thành MyDrive/Sym/DISFA_img.tar (chạy 1 lần) ====
 import os, io, time, shutil, tarfile
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from google.colab import drive
+
 if not os.path.isdir('/content/drive/MyDrive'):
     drive.mount('/content/drive')
 
 SYM   = Path('/content/drive/MyDrive/Sym')
 SRC   = SYM / 'DISFA' / 'img'
 FINAL = SYM / 'DISFA_img.tar'
+TMP   = SYM / 'DISFA_img.tar.partial'
 LOCAL = Path('/content/DISFA_img.tar')
 assert not FINAL.exists(), f'{FINAL} đã có — không cần chạy lại'
+if TMP.exists():
+    TMP.unlink()                               # bản dở dang của lần chạy trước
 
 rel = sorted({p.strip() for k in (1, 2, 3)
               for p in (SYM / 'DISFA' / 'list' / f'DISFA_test_img_path_fold{k}.txt').read_text().split() if p.strip()})
-print(len(rel), 'ảnh cần đóng gói')        # phải là 130814
+print(len(rel), 'ảnh cần đóng gói')          # phải là 130814
+assert len(rel) == 130814, 'Số ảnh trong list khác 130814 — dừng lại kiểm tra'
+
+need = 9e9                                     # ~8.3 GB ảnh + dư
+free_local = shutil.disk_usage('/content').free
+free_drive = shutil.disk_usage('/content/drive').free
+print(f'Trống: /content {free_local / 1e9:.0f} GB | Drive {free_drive / 1e9:.0f} GB')
+assert free_local > need, 'Ổ /content không đủ chỗ cho file tar'
+assert free_drive > need, 'Google Drive không đủ chỗ (cần ~9 GB) — dọn bớt hoặc nâng dung lượng'
 
 def read(p, tries=5):
     for t in range(tries):
@@ -131,6 +150,7 @@ def read(p, tries=5):
                 raise
             time.sleep(2 * (t + 1))
 
+# 1) Đọc từ Drive, ghi tar ra ổ cục bộ
 t0 = time.time()
 with tarfile.open(LOCAL, 'w', format=tarfile.GNU_FORMAT) as tar, ThreadPoolExecutor(16) as ex:
     for i in range(0, len(rel), 2000):
@@ -139,16 +159,25 @@ with tarfile.open(LOCAL, 'w', format=tarfile.GNU_FORMAT) as tar, ThreadPoolExecu
             info = tarfile.TarInfo('img/' + p)
             info.size, info.mtime = len(data), 0
             tar.addfile(info, io.BytesIO(data))
-        print(f'{i + len(chunk):>6}/{len(rel)}  {(time.time() - t0) / 60:.1f} phút', flush=True)
+        done = i + len(chunk)
+        eta = (time.time() - t0) / done * (len(rel) - done) / 60
+        print(f'{done:>6}/{len(rel)}  {(time.time() - t0) / 60:5.1f} phút  (còn ~{eta:.0f} phút)', flush=True)
 
+# 2) Kiểm đủ ảnh
 with tarfile.open(LOCAL) as tar:
-    n = sum(1 for m in tar if m.isfile())
-assert n == len(rel), f'tar có {n} ảnh, cần {len(rel)}'
-print(f'tar OK: {n} ảnh, {LOCAL.stat().st_size / 1e9:.2f} GB — đang chép lên Drive...')
-tmp = SYM / 'DISFA_img.tar.partial'
-shutil.copy(LOCAL, tmp)
-tmp.rename(FINAL)
-print('Xong:', FINAL, f'| tổng {(time.time() - t0) / 60:.0f} phút')
+    names = [m.name for m in tar if m.isfile()]
+assert len(names) == len(rel) and set(names) == {'img/' + p for p in rel}, 'tar thiếu/thừa ảnh'
+size = LOCAL.stat().st_size
+print(f'tar OK: {len(names)} ảnh, {size / 1e9:.2f} GB — đang chép lên Drive...', flush=True)
+
+# 3) Chép lên Drive (.partial → đổi tên khi xong), rồi chờ Drive đồng bộ hết
+shutil.copy(LOCAL, TMP)
+assert TMP.stat().st_size == size, 'Bản chép lên Drive bị thiếu byte'
+TMP.rename(FINAL)
+print('Đang chờ Drive đồng bộ (có thể vài phút)...', flush=True)
+drive.flush_and_unmount()
+LOCAL.unlink()
+print(f'XONG: {FINAL} ({size / 1e9:.2f} GB) | tổng {(time.time() - t0) / 60:.0f} phút')
 ```
 
 ---
