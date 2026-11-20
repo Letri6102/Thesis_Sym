@@ -67,6 +67,8 @@ De_cuong_nghien_cuu.md       đề cương bản 2
 
 Cần secret `GH_TOKEN` trong Colab Secrets: fine-grained token, chỉ cấp cho repo này, quyền Contents read-only. Không bao giờ dán token vào code hay notebook.
 
+Hàm `git()` dưới đây cố ý **không** dùng `check=True`. Bản đầu tiên (trước 20/11) có dùng, và khi clone lỗi thì `CalledProcessError` in nguyên lệnh, kể cả header chứa token, ra output của notebook. Nếu output nào từng hiện chuỗi `Authorization: Basic ...` thì phải thu hồi token đó ngay.
+
 ```python
 import os, sys, base64, shutil, subprocess
 from pathlib import Path
@@ -86,7 +88,11 @@ RUNS     = SYM / 'runs_aug1'
 tok  = userdata.get('GH_TOKEN')
 auth = 'http.extraHeader=Authorization: Basic ' + base64.b64encode(f'x-access-token:{tok}'.encode()).decode()
 def git(*args, cwd=None):
-    subprocess.run(['git', '-c', auth, *args], cwd=cwd, check=True)
+    # KHÔNG dùng check=True: CalledProcessError in nguyên lệnh, tức là in cả header chứa token.
+    r = subprocess.run(['git', '-c', auth, *args], cwd=cwd, capture_output=True, text=True,
+                       env={**os.environ, 'GIT_TERMINAL_PROMPT': '0'})
+    if r.returncode:
+        raise RuntimeError(f'git {args[0]} lỗi (exit {r.returncode}): {r.stderr.strip()}')
 if (REPO / '.git').exists():
     git('fetch', '-q', 'origin', BRANCH, cwd=REPO)
     git('reset', '-q', '--hard', f'origin/{BRANCH}', cwd=REPO)
