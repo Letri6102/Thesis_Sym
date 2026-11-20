@@ -75,7 +75,7 @@ def build(fit, args, seed):
     return rows, accepted, dict(n_frames=int(n_s.sum()), n_subjects=S, subjects=subj)
 
 
-def main():
+def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--data-root", required=True)
     ap.add_argument("--manifest", required=True)
@@ -90,7 +90,7 @@ def main():
     ap.add_argument("--w-max", type=float, default=5.)
     ap.add_argument("--no-implication", action="store_true", help="chỉ luật loại trừ")
     ap.add_argument("--force", action="store_true", help="ghi đè bảng luật đã có")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     sp = load_split(args.manifest, args.data_root)
     fold = sp["fold"]

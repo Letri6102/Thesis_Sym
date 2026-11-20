@@ -15,8 +15,28 @@ AU_NAMES = ["AU1", "AU2", "AU4", "AU6", "AU9", "AU12", "AU25", "AU26"]
 A = len(AU_NAMES)
 EPS = 1e-6
 
-# Luật loại trừ viết tay trong train_Sym_Stage_2.py cũ — chỉ để đối chiếu.
+# Luật loại trừ viết tay trong train_Sym_Stage_2.py cũ (tri thức FACS của SymGraphAU).
 OLD_EXCLUSION = {("AU2", "AU6"), ("AU2", "AU9"), ("AU1", "AU9"), ("AU9", "AU12"), ("AU4", "AU12")}
+
+# Nơi train_contrastive.py evaluate ghi dự đoán. Bản đầu (notebook Tầng 2, 13/11) để val ở
+# evaluation_val/ và test ở evaluation/; bản cũ hơn để cả hai ở evaluation/ — vẫn đọc được.
+EVAL_DIRS = {"val": ("evaluation_val", "evaluation"), "test": ("evaluation",)}
+
+
+def prediction_dir(run, split):
+    """Thư mục chứa <split>_predictions.npz của run; chưa có thì trả thư mục chuẩn (để ghi)."""
+    dirs = [Path(run) / d for d in EVAL_DIRS[split]]
+    return next((d for d in dirs if (d / f"{split}_predictions.npz").exists()), dirs[0])
+
+
+def facs_rules(weight=1.0):
+    """Nhánh R_FACS: cùng decoder MAP nhưng dùng luật viết tay thay cho luật rút từ dữ liệu.
+    Không có trọng số từ dữ liệu nên mọi luật cùng w0 = weight; độ mạnh do λ (chọn trên val) quyết định."""
+    rules = []
+    for a, b in sorted(OLD_EXCLUSION, key=lambda r: (AU_NAMES.index(r[0]), AU_NAMES.index(r[1]))):
+        i, j = sorted((AU_NAMES.index(a), AU_NAMES.index(b)))
+        rules.append(dict(type="exclusion", i=i, j=j, w0=float(weight), rule=f"¬{AU_NAMES[i]} ∨ ¬{AU_NAMES[j]}"))
+    return rules
 
 
 # ---------------------------------------------------------------- dữ liệu

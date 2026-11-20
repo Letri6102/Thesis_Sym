@@ -1,16 +1,17 @@
 """Kiểm tra checkpoint Stage 1 (runs của train_contrastive.py) trước khi chạy decoder.
 
-  python -m stage2_decoder.check_stage1 --runs runs_retry1 [--hash]
+  python -m stage2_decoder.check_stage1 --runs <Sym>/runs_aug1 [--hash]
 
 Mỗi run <variant>/fold{k}/seed{s} cần: config.json, history.json đủ epoch, best.pt
-(đúng epoch tốt nhất trên val), evaluation/val_* và evaluation/test_* từ CÙNG best.pt.
+(đúng epoch tốt nhất trên val), evaluation_val/val_* và evaluation/test_* từ CÙNG best.pt
+(bản cũ để val ở evaluation/ vẫn được nhận).
 --hash: tính sha256 của best.pt để đối chiếu checkpoint_hash trong *_metrics.json (chậm, ~0.5 GB/file).
 """
 import argparse
 import json
 from pathlib import Path
 
-from .core import digest
+from .core import digest, prediction_dir
 
 
 def status(run, do_hash):
@@ -36,9 +37,9 @@ def status(run, do_hash):
         r["state"] = "THIẾU best.pt"
         r["actions"].append("tải best.pt về (đã train xong nhưng file không có ở đây)")
         return r
-    ev = run / "evaluation"
     hashes = {}
     for split in ("val", "test"):
+        ev = prediction_dir(run, split)
         mj, nz = ev / f"{split}_metrics.json", ev / f"{split}_predictions.npz"
         if mj.exists() and nz.exists():
             m = json.loads(mj.read_text(encoding="utf-8"))
@@ -50,7 +51,7 @@ def status(run, do_hash):
         else:
             r["actions"].append(f"evaluate --split {split}")
     if len(set(hashes.values())) > 1:
-        r["notes"].append("val và test từ hai checkpoint khác nhau → xoá evaluation/val_* rồi chạy lại")
+        r["notes"].append("val và test từ hai checkpoint khác nhau → xoá file val_* rồi evaluate lại")
     if do_hash and hashes:
         h = digest(best)
         if any(v != h for v in hashes.values()):
@@ -62,7 +63,7 @@ def status(run, do_hash):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--runs", required=True)
-    ap.add_argument("--variants", nargs="+", default=["baseline", "current", "full"])
+    ap.add_argument("--variants", nargs="+", default=["baseline", "full"])
     ap.add_argument("--folds", type=int, nargs="+", default=[1, 2, 3])
     ap.add_argument("--seeds", type=int, nargs="+", default=[0, 1, 2])
     ap.add_argument("--hash", action="store_true")

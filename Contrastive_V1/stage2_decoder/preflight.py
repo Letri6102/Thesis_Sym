@@ -2,10 +2,10 @@
 
   python -m stage2_decoder.preflight --sym ~/Sym
 Bố cục mong đợi (giống Google Drive MyDrive/Sym):
-  <sym>/Contrastive_V1/   code
-  <sym>/DISFA/img, <sym>/DISFA/list
-  <sym>/splits/fold{1,2,3}.json
-  <sym>/runs_retry1/<variant>/fold{k}/seed{s}/{config.json,history.json,best.pt,evaluation/}
+  <sym>/DISFA/img, <sym>/DISFA/list        (hoặc --data-root nếu ảnh đã chép về /content)
+  <sym>/splits_v2/fold{1,2,3}.json
+  <sym>/runs_aug1/<variant>/fold{k}/seed{s}/{config.json,history.json,best.pt,evaluation_val/,evaluation/}
+Code lấy từ git (thư mục chứa gói stage2_decoder), không đọc từ <sym>.
 """
 import argparse
 import random
@@ -26,12 +26,16 @@ def check(name, ok, detail=""):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--sym", required=True)
-    ap.add_argument("--runs", default="runs_retry1")
+    ap.add_argument("--runs", default="runs_aug1")
+    ap.add_argument("--splits", default="splits_v2")
+    ap.add_argument("--data-root", default=None, help="mặc định <sym>/DISFA")
     ap.add_argument("--n-sample", type=int, default=500)
     ap.add_argument("--need-pretrained", action="store_true", help="kiểm tra cả checkpoints/resnet50 (chỉ cần khi train Stage 1)")
     args = ap.parse_args()
     sym = Path(args.sym).expanduser()
-    code, data, splits, runs = sym / "Contrastive_V1", sym / "DISFA", sym / "splits", sym / args.runs
+    code = Path(__file__).resolve().parent.parent
+    data = Path(args.data_root) if args.data_root else sym / "DISFA"
+    splits, runs = sym / args.splits, sym / args.runs
 
     check("Python ≥ 3.9", sys.version_info >= (3, 9), sys.version.split()[0])
     try:
@@ -57,7 +61,7 @@ def main():
     for k in (1, 2, 3):
         mf = splits / f"fold{k}.json"
         if not mf.exists():
-            check(f"splits/fold{k}.json", False, "tải từ Drive MyDrive/Sym/splits")
+            check(f"{args.splits}/fold{k}.json", False, f"không có trong {splits}")
             continue
         try:
             sp = load_split(mf, data)            # kiểm hash list ↔ manifest

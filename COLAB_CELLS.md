@@ -72,6 +72,29 @@ if w_src.exists() and not w_dst.exists():
     shutil.copy(w_src, w_dst)
 import torch, torchvision
 print('torch', torch.__version__, '| torchvision', torchvision.__version__, '| cuda', torch.cuda.is_available())
+
+import re
+def run_logged(cmd, name):
+    """Chạy lệnh con, ghi toàn bộ output vào MyDrive/Sym/logs/ và in các dòng đáng xem.
+    (Colab không hiện stdout của tiến trình con nếu chỉ dùng subprocess.run.)"""
+    LOGS.mkdir(exist_ok=True)
+    log = LOGS / f'{time.strftime("%Y%m%d_%H%M%S")}_{name}.log'
+    print(f'>> {name} | log: {log.name}', flush=True)
+    with open(log, 'w') as f, subprocess.Popen([str(c) for c in cmd], stdout=subprocess.PIPE,
+                                               stderr=subprocess.STDOUT, text=True, bufsize=1) as p:
+        for line in p.stdout:
+            f.write(line); f.flush()
+            if line.startswith('{"epoch"'):
+                r = json.loads(line)
+                print(f"   ep{r['epoch']:>2}  wa={r['train']['wa']:.4f}  valF1={r['val']['macro_f1']:.3f}"
+                      f"  {r['seconds'] / 60:.0f} phút", flush=True)
+            elif line.startswith('epoch ') and ' step ' in line:
+                if re.search(r'step (1000|2000)/', line):
+                    print('   ' + line.rstrip(), flush=True)
+            elif 'FutureWarning' not in line and 'warnings.warn' not in line:
+                print('   ' + line.rstrip(), flush=True)
+    if p.returncode:
+        raise RuntimeError(f'{name} dừng với mã {p.returncode}, xem log {log}')
 ```
 
 ---
@@ -132,41 +155,26 @@ print('Xong:', FINAL, f'| tổng {(time.time() - t0) / 60:.0f} phút')
 
 ## B. Pilot — `baseline` + `full`, fold 2, seed 0 (cần GPU, chạy sau Setup)
 
-Chỉ dùng inner val, **không** đánh giá test. Output của tiến trình con không hiện trong Colab, nên cell tự ghi log vào `MyDrive/Sym/logs/` và in tóm tắt mỗi epoch.
+Chỉ dùng inner val, **không** đánh giá test. Cell ghi log vào `MyDrive/Sym/logs/` và in tóm tắt mỗi epoch, qua hàm `run_logged` định nghĩa trong cell Setup.
 `EPOCHS`, `BATCH`, `WORKERS` nằm trong config của run. Đổi chúng giữa chừng thì `--resume` sẽ từ chối.
 Bị ngắt phiên: chạy lại Setup rồi chạy lại cell này. Cell tự resume từ `last.pt` và bỏ qua run đã xong.
 
 ```python
-import re
 VARIANTS, FOLD, SEED = ['baseline', 'full'], 2, 0
 EPOCHS, BATCH, WORKERS = 20, 32, 4
 assert str(DATA).startswith('/content/'), 'Chưa có DISFA_img.tar: chạy cell A trước (đọc thẳng Drive hay lỗi)'
-LOGS.mkdir(exist_ok=True)
 
 for v in VARIANTS:
     out = RUNS / v / f'fold{FOLD}' / f'seed{SEED}'
     hist = out / 'history.json'
     if hist.exists() and len(json.loads(hist.read_text())) >= EPOCHS:
         print(f'{v}: đã xong {EPOCHS} epoch, bỏ qua'); continue
-    cmd = [sys.executable, '-u', 'train_contrastive.py', 'train', '--variant', v, '--seed', str(SEED),
-           '--arc', 'resnet50', '--data-root', str(DATA), '--manifest', str(SPLITS / f'fold{FOLD}.json'),
-           '--output', str(out), '--epochs', str(EPOCHS), '--batch-size', str(BATCH), '--workers', str(WORKERS)]
+    cmd = [sys.executable, '-u', 'train_contrastive.py', 'train', '--variant', v, '--seed', SEED,
+           '--arc', 'resnet50', '--data-root', DATA, '--manifest', SPLITS / f'fold{FOLD}.json',
+           '--output', out, '--epochs', EPOCHS, '--batch-size', BATCH, '--workers', WORKERS]
     if (out / 'last.pt').exists():
-        cmd += ['--resume', str(out / 'last.pt')]
-    log = LOGS / f'{time.strftime("%Y%m%d_%H%M%S")}_train_aug1_{v}_fold{FOLD}_seed{SEED}.log'
-    print(f'>> {v} | resume={"--resume" in cmd} | log: {log.name}', flush=True)
-    with open(log, 'w') as f, subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                               text=True, bufsize=1) as p:
-        for line in p.stdout:
-            f.write(line); f.flush()
-            if line.startswith('{"epoch"'):
-                r = json.loads(line)
-                print(f"   ep{r['epoch']:>2}  wa={r['train']['wa']:.4f}  valF1={r['val']['macro_f1']:.3f}"
-                      f"  {r['seconds'] / 60:.0f} phút", flush=True)
-            elif re.search(r'step (1000|2000)/', line) or 'Error' in line or 'Traceback' in line:
-                print('   ' + line.rstrip(), flush=True)
-    if p.returncode:
-        raise RuntimeError(f'{v} dừng với mã {p.returncode}, xem log {log}')
+        cmd += ['--resume', out / 'last.pt']
+    run_logged(cmd, f'train_aug1_{v}_fold{FOLD}_seed{SEED}')
 ```
 
 ---
@@ -198,6 +206,28 @@ for v in ['baseline', 'full']:
     print('   F1/AU cũ :', ' '.join(f'AU{a}:{x:.2f}' for a, x in zip(AU, bo['val']['per_au_f1'])))
     print('   val F1 theo epoch:', ' '.join(f"{e['val']['macro_f1']:.3f}" for e in new))
 ```
+
+---
+
+## D. Tầng 2 — giai đoạn thiết kế, CHỈ VAL (cần GPU cho bước evaluate val, chạy sau Setup)
+
+Dùng module `stage2_decoder`, không dùng notebook `Tang2_Decoder.ipynb` nữa. Cell này:
+1. rút luật từ nhãn fit của `splits_v2`;
+2. chạy `evaluate --split val` với `best.pt`, ghi vào `<run>/evaluation_val/`;
+3. decode các nhánh C0/C1/R0/R1/R_FACS **chỉ trên val**.
+
+**Không đụng outer test.** Kết quả ghi vào `MyDrive/Sym/stage2_v2/`. Chạy lại an toàn: bước nào đã có kết quả thì bỏ qua.
+Lưu ý: điểm val ở đây có λ và ngưỡng được chọn trên chính val, nên chỉ dùng để xem chiều hướng, **không** dùng để báo cáo.
+
+```python
+VARIANTS, FOLDS, SEEDS = ['baseline', 'full'], [2], [0]     # pilot: fold 2
+STAGE2 = SYM / 'stage2_v2'
+run_logged([sys.executable, '-u', '-m', 'stage2_decoder.run_all', '--runs', RUNS, '--splits', SPLITS,
+            '--data-root', DATA, '--output', STAGE2, '--variants', *VARIANTS,
+            '--folds', *FOLDS, '--seeds', *SEEDS, '--val-only'], 'stage2_valonly')
+```
+
+**Mở test** (chỉ làm **một lần**, sau khi đã chốt Tầng 1 và đủ 3 fold): dùng đúng lệnh trên nhưng **bỏ** `'--val-only'` và để `FOLDS = [1, 2, 3]`. Lệnh sẽ evaluate test, decode và gộp bằng `summarize` thành `stage2_v2/summary.json`. So sánh chính là `R0 − C0`.
 
 ---
 

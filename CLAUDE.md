@@ -48,16 +48,19 @@ splits_v2/fold{1,2,3}.json   manifest MỚI: như cũ + mỗi AU >= 100 frame d�
 runs_retry1/                 9 run cũ, KHÔNG augmentation, ĐÓNG BĂNG — chỉ đọc, không ghi thêm
 runs_aug1/                   run mới với strong_train_aug
 runs_swin_probe/             dò Swin-B (đang rỗng)
-failed_runs/, logs/, reports/, stage2_out/
+stage2_v2/                   Tầng 2 chuẩn (stage2_decoder): rules/fold{k}/, results/<variant>/fold{k}/seed{s}/, summary.json
+stage2_out/                  Tầng 2 bản notebook 13/11 trên detector cũ — chỉ là thăm dò
+failed_runs/, logs/, reports/
 Contrastive_V1/checkpoints/resnet50-19c8e357.pth   trọng số ImageNet
 ```
 
 **Repo GitHub** (chỉ có code và tài liệu):
 
 ```text
-Contrastive_V1/              Tầng 1 (train_contrastive.py là entry point) + stage2_decoder/ (Tầng 2 chuẩn)
+Contrastive_V1/              Tầng 1 (train_contrastive.py là entry point) + stage2_decoder/ (Tầng 2 chuẩn, test: tests/test_stage2.py)
+Contrastive_V1/remote_stage2/ script cho máy remote (runs_retry1, splits cũ) — LỖI THỜI, trái quy tắc chỉ chạy Colab
 MultiviewSymAU-master/       bản cài đặt lại SymGraphAU (Stage 2/3 cũ) để đối chiếu
-Tang2_Decoder.ipynb          Tầng 2 bản notebook đã chạy 13/11 — lệch đề cương, sẽ thay bằng stage2_decoder
+Tang2_Decoder.ipynb          Tầng 2 bản notebook 13/11 — LỖI THỜI, lệch đề cương; dùng stage2_decoder
 De_cuong_nghien_cuu.md       đề cương bản 2
 ```
 
@@ -81,6 +84,7 @@ Quy tắc cho mọi cell:
 - Mọi lựa chọn (checkpoint, ngưỡng, λ, luật) **chỉ** dựa trên inner val. Outer test chỉ mở **một lần**, sau khi đã chốt thiết kế.
 - Test đã bị mở trên detector cũ (29/10 cho Tầng 1, 13/11 cho Tầng 2). Các số đó chỉ là **thăm dò**; không so trực tiếp với run mới.
 - Cả 9 run trong `runs_retry1` chạy **không augmentation** (hash khớp `experiment_data.py.bak_20261113_1402`). `strong_train_aug` có trong `experiment_data.py` từ 13/11; mọi run mới ghi vào `runs_aug1`.
+- Tầng 2: nhánh chính là **R0** (luật dữ liệu, bias 0, λ chọn trên val); so sánh chính là `R0 − C0`. Bỏ R\* (20/11). C1/R1 (ngưỡng chỉnh trên 3 subject val) chỉ là nhánh phụ. `R_FACS` (5 luật viết tay) trả lời Q2a. Giai đoạn thiết kế chạy `--val-only`.
 - Khi theo dõi loss, đọc các cột thô `global_con`/`node_con`/`cross_con` trong `history.json`. Không đọc `total`, vì cột này có nhân hệ số ramp.
 
 ## 7. Việc đang mở (cập nhật 20/11/2026)
@@ -89,4 +93,4 @@ Quy tắc cho mọi cell:
 
 1. Đóng gói `DISFA/img` thành `MyDrive/Sym/DISFA_img.tar`: cell A trong `COLAB_CELLS.md`. Bước này chặn mọi run train.
 2. Pilot `baseline` + `full`, fold 2, `runs_aug1`: cell B, kiểm bằng cell C.
-3. Song song (code ở local, không chặn train): thống nhất Tầng 2 về `stage2_decoder`: sửa đường dẫn `evaluation/` → `evaluation_val/` cho val, thêm nhánh `R_FACS`, lấy R0 làm nhánh chính. C1 (chỉnh ngưỡng trên 3 subject val) làm điểm test giảm tới 4 điểm.
+3. Sau pilot: chạy Tầng 2 chỉ trên val (cell D) cho fold 2. Phần code Tầng 2 đã thống nhất xong ngày 20/11.

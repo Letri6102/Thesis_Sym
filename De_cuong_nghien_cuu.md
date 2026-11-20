@@ -158,7 +158,7 @@ Trọng số `w0 = min(5, −log UCB95(lift))`. Mỗi fold có một bảng lu�
 
 **Bỏ bước lọc `help − hurt` khỏi tiêu chí nhận luật;** chỉ giữ nó làm số chẩn đoán. Lý do:
 1. "help" (dự đoán vi phạm trong khi nhãn thật không vi phạm) không có nghĩa là decoder sửa đúng. Với luật loại trừ, decoder có thể tắt nhầm AU kia.
-2. Inner val chỉ có 3 subject và đã được dùng để tune ngưỡng C1, chọn λ và chọn R*. Chọn thêm từng luật trên đó làm tăng quá khớp vào val.
+2. Inner val chỉ có 3 subject và đã được dùng để chọn λ (và tune ngưỡng C1 ở nhánh phụ). Chọn thêm từng luật trên đó làm tăng quá khớp vào val.
 3. λ được chọn trên val với λ = 0 nằm trong lưới, và đó đã là một cổng tắt luật toàn cục.
 4. Code chuẩn (`stage2_decoder/`) không cài bước này, chỉ notebook `Tang2_Decoder.ipynb` có. Hai nơi phải thống nhất.
 
@@ -178,11 +178,20 @@ Khi b = 0, công thức này tương đương với `Σ[y log p + (1−y) log(1�
 | **C1** | không | `−logit(t_i)`; `t_i` tune trên val, lưới 0.05–0.95, bước 0.01 | — |
 | **R0** | luật dữ liệu | 0 | chọn trên val |
 | **R1** | luật dữ liệu | như C1 | chọn trên val |
-| **R_FACS** *(mới, chưa có trong code)* | 5 luật loại trừ viết tay cũ, `w_r = 1` | như R* | chọn trên val |
+| **R_FACS** | 5 luật loại trừ viết tay cũ (`core.OLD_EXCLUSION`), `w_r = 1` | 0 (như R0) | chọn trên val |
 
 - Lưới λ: `{0, .1, .25, .5, .75, 1, 1.5, 2, 3, 4, 6, 8}`. Khi hoà thì chọn λ nhỏ nhất.
-- R* là R0 hoặc R1, chọn theo F1 trên val; khi hoà thì ưu tiên R0. Test chỉ dùng để báo cáo.
-- So sánh `R* − R_FACS` trả lời Q2a. Code đã có sẵn tập luật cũ trong `core.OLD_EXCLUSION`.
+- **Nhánh chính là R0 (quyết định 20/11), bỏ R\*.** So sánh chính là `R0 − C0`. Các so sánh phụ:
+  - `R0 − R_FACS`: trả lời Q2a, vì cùng decoder, cùng bias 0, chỉ khác nguồn luật;
+  - `R_FACS − C0`;
+  - `R1 − C1`;
+  - `C1 − C0`: đo riêng tác động của việc chỉnh ngưỡng.
+- Lý do bỏ C1/R1 khỏi vị trí chính:
+  - **Lý do tiên nghiệm:** C1 chỉnh 8 ngưỡng (mỗi ngưỡng trên lưới 91 điểm) chỉ trên 3 subject val. Đó là nhiều bậc tự do nhất trong cả pipeline, trong khi R0 chỉ chọn một λ.
+  - **Bằng chứng thăm dò:** trên detector cũ (notebook 13/11, test đã mở), C1 thấp hơn C0 tới 4 điểm ở một fold, và R\* luôn chọn R1 nên chịu luôn thiệt hại đó.
+  - Quyết định này **có tham khảo** số test thăm dò, và luận văn phải ghi rõ điều đó. C1 và R1 vẫn được báo cáo đầy đủ.
+- Giai đoạn thiết kế dùng `--val-only` (`decode_val.json`): chỉ đọc inner val, không đụng outer test. Test chỉ được evaluate và decode **một lần**, sau khi đã chốt Tầng 1.
+- Code chuẩn: `Contrastive_V1/stage2_decoder/` (`build_rules` → `decode` → `summarize`, chạy gộp bằng `run_all`), có test ở `tests/test_stage2.py`.
 
 ---
 
@@ -197,20 +206,19 @@ Khi b = 0, công thức này tương đương với `Σ[y log p + (1−y) log(1�
 | `config.json`, `manifest.json`, `environment.json`, `source/` | truy vết đầy đủ |
 | `evaluation/test_metrics.json`, `test_predictions.npz` | kết quả outer test |
 | `evaluation_val/val_metrics.json`, `val_predictions.npz` | dùng để chọn ngưỡng và λ |
-| `stage2_out/rules_fold{k}.csv` | bảng luật mỗi fold (sinh bởi notebook `Tang2_Decoder.ipynb`) |
-| `stage2_out/stage2_results.json` | kết quả các nhánh kèm CI |
+| `stage2_v2/rules/fold{k}/rules.json`, `rules_all.csv` | bảng luật mỗi fold (chỉ từ nhãn fit của `splits_v2`) |
+| `stage2_v2/results/<variant>/fold{k}/seed{s}/decode_val.json` | giai đoạn thiết kế, chỉ val (`--val-only`) |
+| `stage2_v2/results/.../decode_summary.json`, `test_subject_counts.npz` | sau khi mở test: mọi nhánh, Δ và CI theo fold |
+| `stage2_v2/summary.json` | gộp 3 fold × seed, kèm kết luận theo §6 |
+| `stage2_out/` | kết quả notebook `Tang2_Decoder.ipynb` ngày 13/11 trên detector cũ — chỉ là thăm dò |
 
-**Hai bản cài Tầng 2 chưa thống nhất.**
-- Bản **đã chạy** là notebook `Tang2_Decoder.ipynb`. Notebook này đọc `evaluation_val/` và ghi ra `stage2_out/`.
-- Module `Contrastive_V1/stage2_decoder/` (cùng `remote_stage2/`) **chỉ có ở bản local, không có trên Drive**. Module này đọc `evaluation/val_predictions.npz` và ghi ra `downstream/stage2_decoder/`.
-
-Phải chọn một bản làm chuẩn trước khi đo lại Tầng 2. Nếu chọn module thì phải sửa đường dẫn val cho khớp với `evaluation_val/`.
+**Đã thống nhất Tầng 2 (20/11):** module `stage2_decoder` là bản chuẩn. Module đọc val ở `evaluation_val/` (vẫn nhận bố cục cũ `evaluation/`), có nhánh `R_FACS`, có chế độ `--val-only`, và có test. Notebook `Tang2_Decoder.ipynb` lệch đề cương ở 5 điểm (bootstrap luật 1000 lần, CI 500 lần, lưới λ 8 giá trị, còn lọc help−hurt, CI theo từng fold) nên không dùng nữa.
 
 ### Bảng và hình cho luận văn
 
 1. **Bảng chính** — macro-F1 và F1 từng AU: lấy mean 3 fold cho mỗi seed, rồi báo mean ± SD qua seed, cho từng variant.
 2. **Bảng ablation Tầng 1** — baseline / global / node / cross / full.
-3. **Bảng Tầng 2** — C0, C1, R0, R1, R*, R_FACS, kèm Δ và CI bootstrap theo subject.
+3. **Bảng Tầng 2** — C0, C1, R0, R1, R_FACS, kèm Δ và CI bootstrap theo subject; so sánh chính là `R0 − C0`.
 4. **Bảng luật** — luật nào qua kiểm định ở fold nào, đối chiếu với cột `old_rule`.
 5. **Hình pipeline** — hai nhánh và điểm hợp lưu.
 6. **Hình chẩn đoán** — quỹ đạo `wa`, các cột contrastive thô và val macro-F1 theo epoch, trước và sau khi sửa augmentation.
@@ -235,7 +243,7 @@ Phần này **không phụ thuộc vào việc có vượt điểm paper hay kh�
 | Mục tiêu | Trạng thái |
 |---|---|
 | Contrastive cải thiện so với baseline của chính mình | **chưa đạt**: hiện `full − baseline = −0.31` (1 seed) |
-| Tầng 2: `R* − C1 > 0` và `R* − C0 > 0`, CI không chứa 0, mức +0.2 đến +0.5 | **chưa đạt**: lần đo 13/11 có R0 − C0 = +0.32 nhưng CI chứa 0 |
+| Tầng 2: `R0 − C0 > 0`, CI không chứa 0, mức +0.2 đến +0.5 | **chưa đạt**: lần đo thăm dò 13/11 (detector cũ) có R0 − C0 = +0.32 nhưng CI chứa 0 |
 | Hết quá khớp: `wa` không về 1e-05, val đạt đỉnh sau epoch 2 | **chưa đạt ở 9 run cũ** (`wa` → 0.0000, đỉnh val ở epoch 1–8, §2.4); chờ run đầu tiên có `strong_train_aug` |
 
 ### Mức tốt nhất
@@ -251,7 +259,7 @@ Bảng dưới là **giả định để lập kế hoạch, không phải kết
 | Đổi sang Swin-B | +1.0 | +1.5 | backbone của paper |
 | Tune ngưỡng từng AU (C1) | chưa đo | chưa đo | vệ sinh |
 | Tune contrastive sau khi hết quá khớp | 0.0 | +0.5 | **đóng góp** |
-| Tầng 2 decoder (R* so với C1) | +0.25 | +0.5 | **đóng góp** |
+| Tầng 2 decoder (R0 so với C0) | +0.25 | +0.5 | **đóng góp** |
 
 Cộng các mức thấp được 62.78 và các mức cao được 66.5, nhưng **các khoản không cộng thẳng được**:
 1. Augmentation và refit cùng chữa một bệnh (quá khớp/thiếu dữ liệu), nên phần lợi chồng lên nhau.
@@ -265,7 +273,7 @@ Cộng các mức thấp được 62.78 và các mức cao được 66.5, nhưng
   - **(a) giao thức chặt** — kết quả chính;
   - **(b) giao thức khớp paper** — refit trên `fit + inner val` với số epoch cố định lấy từ (a). Dòng này chỉ dùng để so với 62.94.
 
-**Xung đột giữa refit và Tầng 2.** Sau khi refit trên `fit + inner val` thì không còn val để tune ngưỡng C1, chọn λ và chọn R*. Cách xử lý: lấy `t_i`, λ và R* từ mô hình (a), áp nguyên cho mô hình (b), và ghi rõ đây là chuyển giao tham số. Không tune lại trên test.
+**Xung đột giữa refit và Tầng 2.** Sau khi refit trên `fit + inner val` thì không còn val để chọn λ (và tune ngưỡng C1 ở nhánh phụ). Cách xử lý: lấy λ và `t_i` từ mô hình (a), áp nguyên cho mô hình (b), và ghi rõ đây là chuyển giao tham số. Không tune lại trên test.
 
 **Cảnh báo phải nêu trong luận văn:**
 - Đòn bẩy chắc nhất (Swin-B) là backbone của chính paper.
@@ -279,7 +287,7 @@ Cộng các mức thấp được 62.78 và các mức cao được 66.5, nhưng
 
 **CI dùng chung cho mọi tiêu chí:** bootstrap 2000 lần, resample subject **trong từng fold**, rồi lấy trung bình 3 fold (`stage2_decoder/summarize.py`). Phép so sánh ghép cặp trên cùng fold/seed. Mỗi seed cho một CI.
 
-**Tầng 2 được đầu tư tiếp** chỉ khi `R* − C1 > 0` **và** `R* − C0 > 0`: mean qua seed dương, và CI không chứa 0 ở ít nhất 2/3 seed.
+**Tầng 2 được đầu tư tiếp** chỉ khi `R0 − C0 > 0`: mean qua seed dương, và CI không chứa 0 ở ít nhất 2/3 seed (cài trong `summarize.verdict`). Trước 20/11, tiêu chí là `R* − C1 > 0` và `R* − C0 > 0`; đã đổi khi bỏ R\* (§3).
 
 > Đo lần đầu (13/11, trên Tầng 1 chưa sửa): **TRƯỢT**. R* thua C0 ở 2/3 variant, mọi CI của `R*−C0` đều chứa 0. So sánh sạch `R0 vs C0` cho +0.32 điểm trung bình, chưa tách được khỏi nhiễu.
 >
@@ -308,7 +316,7 @@ Chỉ một so sánh chính này được mở test. Các variant còn lại đ�
 | ~~Chẩn đoán "contrastive phân kỳ" có thể sai~~ | **đã xác nhận sai (19/11, §2.4)**: các cột thô giảm đều | mở lại sweep η/ζ/τ, nhưng chỉ **sau** khi có run hết quá khớp |
 | `strong_train_aug` quá mạnh cho AU tinh: `RandomErasing` che vùng AU mà nhãn giữ nguyên; ColorJitter 0.4 + grayscale làm mờ dấu hiệu nhỏ | trung bình | run thử 1 fold so với bản chỉ crop + lật; nếu F1 các AU nhỏ (AU1/2/9/26) tụt thì bỏ `RandomErasing` trước |
 | `full + queue` không giúp AU hiếm vì queue chỉ cấp cho `L_global` | trung bình | cài node-level queue, hoặc bỏ giả thuyết này |
-| Quá khớp vào inner val: ngưỡng C1, λ, R* và checkpoint đều chọn trên 3 subject | trung bình | không thêm bước chọn trên val (bỏ lọc help−hurt); với AU thưa trong val thì dùng ngưỡng cố định 0.5 |
+| Quá khớp vào inner val: λ và checkpoint đều chọn trên 3 subject (ngưỡng C1 chỉ ở nhánh phụ) | trung bình | không thêm bước chọn trên val (bỏ lọc help−hurt); với AU thưa trong val thì dùng ngưỡng cố định 0.5 |
 | Inner val fold 1 quá thưa (AU2 chỉ 4 frame dương / 14.535) | trung bình | **đã xử lý (20/11)**: `splits_v2` đã sinh trên Drive, val fold 1 = SN002, SN016, SN032 |
 | Fit fold 1 trong `splits_v2` thiếu AU1/AU2/AU26 (khoảng −45%) | trung bình | chấp nhận có chủ đích; báo cáo điểm theo từng fold; cân nhắc refit trên fit + val cho model cuối |
 | Hai bản cài Tầng 2 (notebook đã chạy và module `stage2_decoder` chỉ có ở local) đọc val ở hai đường dẫn khác nhau | trung bình | chọn một bản làm chuẩn, sửa đường dẫn, đo lại trên cùng một bản |
@@ -341,3 +349,7 @@ Chỉ một so sánh chính này được mở test. Các variant còn lại đ�
     - §5: cập nhật trạng thái mục "hết quá khớp";
     - §7: đóng rủi ro chẩn đoán phân kỳ, thêm rủi ro augmentation quá mạnh.
 11. **Cập nhật 20/11:** chốt việc rút lại inner val (`splits_v2`, ≥ 100 frame dương mỗi AU, cùng seed 2026); chỉ fold 1 đổi, val mới là SN002, SN016, SN032. Code ở `experiment_data.py` (`min_val_positive`), test ở `tests/test_contrastive.py`. Ghi lại cái giá là fit fold 1 thiếu AU1/AU2/AU26, và việc đã không chọn mức trần 1/3.
+12. **Cập nhật 20/11 — Tầng 2:**
+    - thống nhất về module `stage2_decoder`: đường dẫn `evaluation_val/`, nhánh `R_FACS`, chế độ `--val-only`, test end-to-end;
+    - lấy R0 làm nhánh chính và bỏ R\*; tiêu chí ở §6 đổi thành `R0 − C0`;
+    - đầu ra mới ở `MyDrive/Sym/stage2_v2/`.
