@@ -96,6 +96,48 @@ def synthetic_data(tmp_path):
     return root, manifest
 
 
+def label_lists(tmp_path, train_spec):
+    """Chỉ ghi list/nhãn (không ảnh) cho fold 1; test luôn là SN009."""
+    root = tmp_path / 'lists_only'
+    lists = root / 'list'
+    lists.mkdir(parents=True)
+    for part, spec in [('train', train_spec), ('test', {'SN009': [[1] * 8, [0] * 8]})]:
+        paths, labels = [], []
+        for subject, rows in spec.items():
+            for j, row in enumerate(rows):
+                paths.append(f'{subject}/{j}.png')
+                labels.append(row)
+        (lists / f'DISFA_{part}_img_path_fold1.txt').write_text('\n'.join(paths))
+        np.savetxt(lists / f'DISFA_{part}_label_fold1.txt', labels)
+    return root
+
+
+def test_val_draw_min_positive(tmp_path):
+    rich = [[1] * 8, [1] * 8, [0] * 8]
+    no_au2 = [[1, 0, 1, 1, 1, 1, 1, 1], [0] * 8]
+    spec = {'SN001': rich, 'SN002': rich, 'SN003': no_au2, 'SN004': no_au2, 'SN005': no_au2, 'SN006': no_au2}
+    root = label_lists(tmp_path, spec)
+
+    # Mặc định: đúng thuật toán cũ, không thêm trường mới (manifest cũ tái tạo được y hệt).
+    plain = make_manifest(root, 1, val_subject_count=1, check_images=False)
+    expected = sorted(np.random.default_rng(2026 + 1).choice(sorted(spec), 1, replace=False).tolist())
+    assert plain['val_subjects'] == expected and 'val_min_positive' not in plain
+
+    m = make_manifest(root, 1, val_subject_count=1, min_val_positive=2, check_images=False)
+    assert m['val_subjects'][0] in ('SN001', 'SN002')
+    assert m['val_min_positive'] == 2 and m['val_draws'] >= 1
+    path = tmp_path / 'm.json'
+    path.write_text(json.dumps(m))
+    load_manifest(path, root)
+
+    m['val_min_positive'] = 3
+    path.write_text(json.dumps(m))
+    with pytest.raises(ValueError, match='val_min_positive'):
+        load_manifest(path, root)
+    with pytest.raises(ValueError, match='min_val_positive=3'):
+        make_manifest(root, 1, val_subject_count=1, min_val_positive=3, check_images=False, max_draws=50)
+
+
 def test_manifest_leakage_and_tamper(tmp_path):
     root, manifest = synthetic_data(tmp_path)
     m = load_manifest(manifest, root)

@@ -60,7 +60,13 @@ def read_partition(root, fold, part):
     return paths, labels, {paths_file.name: digest(paths_file), labels_file.name: digest(labels_file)}
 
 
-def make_manifest(root, fold, val_subject_count=3, split_seed=2026, check_images=True):
+def make_manifest(root, fold, val_subject_count=3, split_seed=2026, check_images=True,
+                  min_val_positive=0, max_draws=10000):
+    """min_val_positive > 0: rút lại (cùng luồng RNG) tới khi mọi AU có >= min_val_positive
+    frame dương trong inner val. Lần rút đầu giống hệt bản cũ, nên fold nào đã thoả thì
+    không đổi; min_val_positive = 0 cho đúng manifest cũ."""
+    if min_val_positive < 0 or max_draws < 1:
+        raise ValueError('min_val_positive >= 0 and max_draws >= 1 required')
     train, labels, hashes = read_partition(root, fold, 'train')
     test, _, test_hashes = read_partition(root, fold, 'test')
     hashes.update(test_hashes)
@@ -71,7 +77,13 @@ def make_manifest(root, fold, val_subject_count=3, split_seed=2026, check_images
     if not 0 < val_subject_count < len(subjects):
         raise ValueError('Invalid number of inner-validation subjects')
     rng = np.random.default_rng(split_seed + fold)
-    val_subjects = sorted(rng.choice(subjects, val_subject_count, replace=False).tolist())
+    subject_of = np.array([p.split('/')[0] for p in train])
+    for draws in range(1, max_draws + 1):
+        val_subjects = sorted(rng.choice(subjects, val_subject_count, replace=False).tolist())
+        if (labels[np.isin(subject_of, val_subjects)].sum(0) >= min_val_positive).all():
+            break
+    else:
+        raise ValueError(f'No inner-validation draw in {max_draws} satisfies min_val_positive={min_val_positive}')
     fit = [i for i, p in enumerate(train) if p.split('/')[0] not in val_subjects]
     val = [i for i, p in enumerate(train) if p.split('/')[0] in val_subjects]
     rates = labels[fit].mean(0)
@@ -83,12 +95,15 @@ def make_manifest(root, fold, val_subject_count=3, split_seed=2026, check_images
         for p in train + test:
             if not (Path(root) / 'img' / p).is_file():
                 raise FileNotFoundError(Path(root) / 'img' / p)
-    return dict(schema=1, dataset='DISFA', fold=fold, split_seed=split_seed,
-                fit_indices=fit, val_indices=val,
-                fit_subjects=sorted(set(subjects) - set(val_subjects)),
-                val_subjects=val_subjects, test_subjects=test_subjects,
-                train_weights=weights.tolist(), input_hashes=hashes,
-                matrix_hash=digest(MATRIX_PATH), au_names=AU_NAMES)
+    m = dict(schema=1, dataset='DISFA', fold=fold, split_seed=split_seed,
+             fit_indices=fit, val_indices=val,
+             fit_subjects=sorted(set(subjects) - set(val_subjects)),
+             val_subjects=val_subjects, test_subjects=test_subjects,
+             train_weights=weights.tolist(), input_hashes=hashes,
+             matrix_hash=digest(MATRIX_PATH), au_names=AU_NAMES)
+    if min_val_positive > 0:  # chỉ thêm khi dùng ràng buộc, để manifest cũ tái tạo được y hệt
+        m.update(val_min_positive=int(min_val_positive), val_draws=draws)
+    return m
 
 
 def load_manifest(path, root):
@@ -110,6 +125,8 @@ def load_manifest(path, root):
     ts = {p.split('/')[0] for p in test}
     if fs & vs or fs & ts or vs & ts or fs != set(m['fit_subjects']) or vs != set(m['val_subjects']) or ts != set(m['test_subjects']):
         raise ValueError('Subject leakage or inconsistent manifest')
+    if 'val_min_positive' in m and (labels[val].sum(0) < m['val_min_positive']).any():
+        raise ValueError('Inner val violates the manifest val_min_positive constraint')
     rates = labels[fit].mean(0)
     if (rates <= 0).any():
         raise ValueError('Fit has missing positive classes')
@@ -174,10 +191,13 @@ if __name__ == '__main__':
     parser.add_argument('--output', required=True)
     parser.add_argument('--split-seed', type=int, default=2026)
     parser.add_argument('--val-subjects', type=int, default=3)
+    parser.add_argument('--min-val-positive', type=int, default=0,
+                        help='số frame dương tối thiểu mỗi AU trong inner val; 0 = giữ cách chia cũ')
     args = parser.parse_args()
     dest = Path(args.output)
     dest.mkdir(parents=True, exist_ok=True)
-    manifests = [make_manifest(args.data_root, f, args.val_subjects, args.split_seed) for f in (1, 2, 3)]
+    manifests = [make_manifest(args.data_root, f, args.val_subjects, args.split_seed,
+                               min_val_positive=args.min_val_positive) for f in (1, 2, 3)]
     universes = [set(m['fit_subjects'] + m['val_subjects'] + m['test_subjects']) for m in manifests]
     tests = [s for m in manifests for s in m['test_subjects']]
     if any(u != universes[0] for u in universes) or len(universes[0]) != 27 or len(tests) != len(set(tests)) or set(tests) != universes[0]:
@@ -189,3 +209,7 @@ if __name__ == '__main__':
             raise FileExistsError(f'Refusing to replace a different split: {out}')
         out.write_text(content, encoding='utf-8')
         print(f'{out}: fit={manifest["fit_subjects"]}, val={manifest["val_subjects"]}, test={manifest["test_subjects"]}')
+        _, lab, _ = read_partition(args.data_root, fold, 'train')
+        vpos, fpos = lab[manifest['val_indices']].sum(0), lab[manifest['fit_indices']].sum(0)
+        print('   val draws:', manifest.get('val_draws', 1), '| AU: val+ / fit+ =',
+              ', '.join(f'AU{a}:{int(v)}/{int(f)}' for a, v, f in zip(AU_NAMES, vpos, fpos)))

@@ -32,7 +32,7 @@ Kế hoạch nghiên cứu và trạng thái hiện tại nằm ở [De_cuong_ng
 
 - **Không push thay đổi vào các file bị hash khi còn run đang chạy dở**, kể cả sửa một dấu cách. Muốn sửa thì để run xong, hoặc chấp nhận train lại từ đầu vào thư mục mới.
 - File nằm ngoài danh sách trên (ví dụ `stage2_decoder/`, `remote_stage2/`, notebook, `.md` ở gốc repo) thì sửa thoải mái.
-- `.gitattributes` đặt `* -text` có chủ đích: git giữ nguyên byte, kể cả CRLF, để hash của code clone về trùng với hash của bản trên Drive. **Không đổi sang `eol=lf`** khi còn run cũ cần resume.
+- `.gitattributes` đặt `* -text` có chủ đích: git không tự đổi line ending, nên byte của code clone về trùng với byte lúc commit (code hiện dùng LF, giống bản trên Drive). **Không bật `core.autocrlf`** và không thêm quy tắc `eol=` khi còn run dở cần resume.
 - `torch` không được pin trong `requirements-colab.txt`. Cell Setup in phiên bản torch ra; nếu Colab tự nâng torch giữa hai phiên thì run dở sẽ không resume được.
 
 ## 4. Cấu trúc
@@ -43,7 +43,8 @@ Kế hoạch nghiên cứu và trạng thái hiện tại nằm ở [De_cuong_ng
 DISFA/img/SNxxx/N.png        130.814 frame, ảnh 224×224 đã crop
 DISFA/list/                  DISFA_{train,test}_{img_path,label,weight}_fold{1,2,3}.txt
 DISFA/ActionUnit_Labels/     nhãn gốc
-splits/fold{1,2,3}.json      manifest fit/val/test (split seed 2026, 3 subject val)
+splits/fold{1,2,3}.json      manifest CŨ (seed 2026, 3 subject val) — chỉ cho runs_retry1, không sửa
+splits_v2/fold{1,2,3}.json   manifest MỚI: như cũ + mỗi AU >= 100 frame dương trong val (chỉ fold 1 đổi)
 runs_retry1/                 9 run cũ, KHÔNG augmentation, ĐÓNG BĂNG — chỉ đọc, không ghi thêm
 runs_aug1/                   run mới với strong_train_aug
 runs_swin_probe/             dò Swin-B (đang rỗng)
@@ -79,7 +80,7 @@ BRANCH   = 'main'
 REPO     = Path('/content/Thesis_Sym')
 CODE     = REPO / 'Contrastive_V1'
 SYM      = Path('/content/drive/MyDrive/Sym')
-SPLITS   = SYM / 'splits'
+SPLITS   = SYM / 'splits_v2'           # manifest mới (val fold 1 rút lại); splits/ cũ chỉ cho runs_retry1
 RUNS     = SYM / 'runs_aug1'
 
 tok  = userdata.get('GH_TOKEN')
@@ -134,6 +135,7 @@ subprocess.run(cmd, check=True)
 ## 6. Quyết định giao thức đã chốt
 
 - Thứ tự 8 AU: `1, 2, 4, 6, 9, 12, 25, 26`; intensity ≥ 2 là dương. Chia 3 fold theo subject, mỗi fold 3 subject làm val bên trong.
+- Inner val (20/11): `splits_v2`, sinh bằng `experiment_data.py --split-seed 2026 --val-subjects 3 --min-val-positive 100`. Fold 2/3 trùng bản cũ, fold 1 rút lại, vì val cũ có AU2 = 4 frame và AU1 = 73 frame, tất cả từ một subject.
 - Bỏ variant `current` (12/11). Các variant chính: `baseline` và `full`.
 - Mọi lựa chọn (checkpoint, ngưỡng, λ, luật) **chỉ** dựa trên inner val. Outer test chỉ mở **một lần**, sau khi đã chốt thiết kế.
 - Test đã bị mở trên detector cũ (29/10 cho Tầng 1, 13/11 cho Tầng 2). Các số đó chỉ là **thăm dò**; không so trực tiếp với run mới.
@@ -143,6 +145,6 @@ subprocess.run(cmd, check=True)
 ## 7. Việc đang mở (cập nhật 20/11/2026)
 
 - Đóng gói `DISFA/img` thành `MyDrive/Sym/DISFA_img.tar` (làm trên Colab, từ Drive). Hiện 10/26 lần train bị dừng vì Drive báo `FileNotFoundError` với ảnh vẫn có thật.
-- Chia lại val bên trong của fold 1: hiện AU2 chỉ có 4 frame dương, AU1 có 73. Manifest sinh trên Colab, ghi vào Drive.
+- Sinh `splits_v2` trên Colab (code đã có, xem đề cương §3). Phải xong trước run đầu tiên dùng `splits_v2`.
 - Thống nhất Tầng 2 về `stage2_decoder`: sửa đường dẫn `evaluation/` → `evaluation_val/` cho val, thêm nhánh `R_FACS`, lấy R0 làm nhánh chính. C1 (chỉnh ngưỡng trên 3 subject val) làm điểm test giảm tới 4 điểm.
 - Pilot `baseline` + `full`, fold 2, `runs_aug1`.

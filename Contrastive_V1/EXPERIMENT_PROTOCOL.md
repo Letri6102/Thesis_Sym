@@ -72,6 +72,10 @@ lén sửa loss chỉ ở nhánh full. Runner mới không thay đổi objective
    subject giao nhau giữa outer train và test, không trùng path, nhãn nhị phân.
 2. Trong outer train, lấy 3 subject validation bằng split seed cố định 2026.
    Split này dùng chung mọi training seed/variant. Fit dùng các subject còn lại.
+   Từ 20/11/2026 (`splits_v2`): `--min-val-positive 100`, tức rút lại trên cùng
+   luồng RNG tới khi mọi AU có >= 100 frame dương trong inner val. Lần rút đầu
+   giống bản cũ, nên fold 2/3 không đổi; chỉ fold 1 đổi (val cũ có AU2 = 4 frame).
+   Ràng buộc chỉ dùng nhãn outer train, không đụng outer test.
 3. Lưu manifest và hash nội dung list/labels/matrix. Tính AU weight **chỉ từ fit**.
    Nếu AU không có mẫu dương trong fit thì dừng và xem lại split, không sinh inf.
 4. Checkpoint chọn bằng macro-F1 inner-validation, ngưỡng AU cố định 0.5.
