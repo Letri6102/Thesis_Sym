@@ -124,6 +124,14 @@ Hai nhánh độc lập, gặp nhau ở bước cuối.
   - Ở fold 1 có 561/816 bộ 3 subject thoả quy tắc. Lấy bộ thoả đầu tiên trên luồng RNG, tương đương rút ngẫu nhiên đều trong các bộ thoả, nên không cố ý chọn bộ "giàu" AU1/AU2, vốn sẽ làm fit mất mẫu hiếm.
   - Quy tắc chỉ dùng nhãn của outer train và được chốt trước mọi run mới. Outer test của cả 3 fold không đổi.
   - Mọi run mới dùng `splits_v2`. `splits/` cũ giữ nguyên, vì 9 run trong `runs_retry1` tham chiếu hash của nó.
+  - **Kết quả (sinh trên Colab 20/11):** fold 1 rút 2 lần, val mới là **SN002, SN016, SN032**; fold 2 và fold 3 giữ nguyên.
+  - **Cái giá đã chấp nhận:** SN016 và SN032 là hai subject có nhiều AU1/AU2 nhất, nên fit fold 1 mất khoảng một nửa số frame dương của ba AU:
+    - AU1: 3235 → 1794
+    - AU2: 2000 → **1098**
+    - AU26: 8710 → 4750
+    
+    Đây là fit nhỏ nhất trong 3 fold (AU2 ở fold 2 là 3813, fold 3 là 4190). Phương án thêm mức trần "val ≤ 1/3 số frame dương mỗi AU" (fit AU2 fold 1 còn 1827, nhưng fold 2 sẽ đổi val) đã được cân nhắc và **không chọn** (20/11).
+  - **Hệ quả cần ghi trong luận văn:** điểm AU1/AU2/AU26 ở test fold 1 có thể thấp hơn chỉ vì fit nhỏ hơn. Cách giảm nhẹ là refit trên toàn bộ outer train (fit + val) với số epoch đã chọn trên val (xem §5, phương án (b)).
 
 **Variant:**
 - Đang có: `baseline` (η=ν=ζ=0) · `global` · `node` · `cross` · `global_cross` · `full`.
@@ -301,7 +309,8 @@ Chỉ một so sánh chính này được mở test. Các variant còn lại đ�
 | `strong_train_aug` quá mạnh cho AU tinh: `RandomErasing` che vùng AU mà nhãn giữ nguyên; ColorJitter 0.4 + grayscale làm mờ dấu hiệu nhỏ | trung bình | run thử 1 fold so với bản chỉ crop + lật; nếu F1 các AU nhỏ (AU1/2/9/26) tụt thì bỏ `RandomErasing` trước |
 | `full + queue` không giúp AU hiếm vì queue chỉ cấp cho `L_global` | trung bình | cài node-level queue, hoặc bỏ giả thuyết này |
 | Quá khớp vào inner val: ngưỡng C1, λ, R* và checkpoint đều chọn trên 3 subject | trung bình | không thêm bước chọn trên val (bỏ lọc help−hurt); với AU thưa trong val thì dùng ngưỡng cố định 0.5 |
-| Inner val fold 1 quá thưa (AU2 chỉ 4 frame dương / 14.535) | trung bình | **đã xử lý ở code (20/11)**: `splits_v2` với `--min-val-positive 100`; cần sinh manifest trên Colab trước run fold 1 đầu tiên |
+| Inner val fold 1 quá thưa (AU2 chỉ 4 frame dương / 14.535) | trung bình | **đã xử lý (20/11)**: `splits_v2` đã sinh trên Drive, val fold 1 = SN002, SN016, SN032 |
+| Fit fold 1 trong `splits_v2` thiếu AU1/AU2/AU26 (khoảng −45%) | trung bình | chấp nhận có chủ đích; báo cáo điểm theo từng fold; cân nhắc refit trên fit + val cho model cuối |
 | Hai bản cài Tầng 2 (notebook đã chạy và module `stage2_decoder` chỉ có ở local) đọc val ở hai đường dẫn khác nhau | trung bình | chọn một bản làm chuẩn, sửa đường dẫn, đo lại trên cùng một bản |
 | Chưa xác minh được con số và giao thức của paper | trung bình | lấy PDF SymGraphAU (`paper.txt` hiện tại là bài khác) |
 | Ngân sách GPU Colab | trung bình | chép ảnh về `/content`; dùng `--stop-after` + `--resume` |
@@ -331,4 +340,4 @@ Chỉ một so sánh chính này được mở test. Các variant còn lại đ�
     - §3 Tầng 1: augmentation đã được sửa trên Drive bằng `strong_train_aug` trong `experiment_data.py`; ghi cấu hình cụ thể và xác nhận bằng hash rằng 9 run cũ chưa dùng nó;
     - §5: cập nhật trạng thái mục "hết quá khớp";
     - §7: đóng rủi ro chẩn đoán phân kỳ, thêm rủi ro augmentation quá mạnh.
-11. **Cập nhật 20/11:** chốt việc rút lại inner val (`splits_v2`, ≥ 100 frame dương mỗi AU, cùng seed 2026); chỉ fold 1 đổi. Code ở `experiment_data.py` (`min_val_positive`), test ở `tests/test_contrastive.py`.
+11. **Cập nhật 20/11:** chốt việc rút lại inner val (`splits_v2`, ≥ 100 frame dương mỗi AU, cùng seed 2026); chỉ fold 1 đổi, val mới là SN002, SN016, SN032. Code ở `experiment_data.py` (`min_val_positive`), test ở `tests/test_contrastive.py`. Ghi lại cái giá là fit fold 1 thiếu AU1/AU2/AU26, và việc đã không chọn mức trần 1/3.

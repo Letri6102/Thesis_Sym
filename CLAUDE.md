@@ -63,85 +63,20 @@ De_cuong_nghien_cuu.md       đề cương bản 2
 
 `Contrastive_V1/COLAB_PRO.md` và `notebooks/Colab_Contrastive_V1.ipynb` đã **lỗi thời**: hai file này giả định code nằm ở `MyDrive/SymAU` trên Drive. Dùng mục 5 thay thế.
 
-## 5. Cell Setup chuẩn trên Colab
+## 5. Cell Colab chuẩn → [COLAB_CELLS.md](COLAB_CELLS.md)
 
-Cần secret `GH_TOKEN` trong Colab Secrets: fine-grained token, chỉ cấp cho repo này, quyền Contents read-only. Không bao giờ dán token vào code hay notebook.
+Mọi cell Colab (Setup, đóng gói ảnh, pilot, kiểm kết quả, kéo log về) nằm trong `COLAB_CELLS.md`. Khi đưa cell mới cho chủ dự án, cập nhật luôn file đó.
 
-Hàm `git()` dưới đây cố ý **không** dùng `check=True`. Bản đầu tiên (trước 20/11) có dùng, và khi clone lỗi thì `CalledProcessError` in nguyên lệnh, kể cả header chứa token, ra output của notebook. Nếu output nào từng hiện chuỗi `Authorization: Basic ...` thì phải thu hồi token đó ngay.
-
-```python
-import os, sys, base64, shutil, subprocess
-from pathlib import Path
-from google.colab import drive, userdata
-
-if not os.path.isdir('/content/drive/MyDrive'):
-    drive.mount('/content/drive')
-
-REPO_URL = 'https://github.com/Letri6102/Thesis_Sym.git'
-BRANCH   = 'main'
-REPO     = Path('/content/Thesis_Sym')
-CODE     = REPO / 'Contrastive_V1'
-SYM      = Path('/content/drive/MyDrive/Sym')
-SPLITS   = SYM / 'splits_v2'           # manifest mới (val fold 1 rút lại); splits/ cũ chỉ cho runs_retry1
-RUNS     = SYM / 'runs_aug1'
-
-tok  = userdata.get('GH_TOKEN')
-auth = 'http.extraHeader=Authorization: Basic ' + base64.b64encode(f'x-access-token:{tok}'.encode()).decode()
-def git(*args, cwd=None):
-    # KHÔNG dùng check=True: CalledProcessError in nguyên lệnh, tức là in cả header chứa token.
-    r = subprocess.run(['git', '-c', auth, *args], cwd=cwd, capture_output=True, text=True,
-                       env={**os.environ, 'GIT_TERMINAL_PROMPT': '0'})
-    if r.returncode:
-        raise RuntimeError(f'git {args[0]} lỗi (exit {r.returncode}): {r.stderr.strip()}')
-if (REPO / '.git').exists():
-    git('fetch', '-q', 'origin', BRANCH, cwd=REPO)
-    git('reset', '-q', '--hard', f'origin/{BRANCH}', cwd=REPO)
-else:
-    git('clone', '-q', '--depth', '1', '-b', BRANCH, REPO_URL, str(REPO))
-del tok, auth
-print('commit:', subprocess.run(['git', 'log', '-1', '--format=%h %s'], cwd=REPO,
-                                capture_output=True, text=True).stdout.strip())
-
-IMG_TAR = SYM / 'DISFA_img.tar'          # ảnh đóng gói một file; có thì chép về /content cho nhanh
-if IMG_TAR.exists():
-    DATA = Path('/content/DISFA')
-    if not (DATA / 'img').exists():
-        DATA.mkdir(parents=True, exist_ok=True)
-        shutil.copy(IMG_TAR, '/content/DISFA_img.tar')
-        subprocess.run(['tar', '-xf', '/content/DISFA_img.tar', '-C', str(DATA)], check=True)
-        os.remove('/content/DISFA_img.tar')
-        shutil.copytree(SYM / 'DISFA' / 'list', DATA / 'list', dirs_exist_ok=True)
-else:
-    DATA = SYM / 'DISFA'                 # đọc thẳng Drive: chậm và hay lỗi FileNotFoundError
-print('DATA =', DATA)
-
-os.chdir(CODE)
-subprocess.run([sys.executable, '-m', 'pip', 'install', '-q', '-r', 'requirements-colab.txt'], check=True)
-(CODE / 'checkpoints').mkdir(exist_ok=True)
-w_src = SYM / 'Contrastive_V1' / 'checkpoints' / 'resnet50-19c8e357.pth'
-w_dst = CODE / 'checkpoints' / 'resnet50-19c8e357.pth'
-if w_src.exists() and not w_dst.exists():
-    shutil.copy(w_src, w_dst)
-import torch, torchvision
-print('torch', torch.__version__, '| torchvision', torchvision.__version__, '| cuda', torch.cuda.is_available())
-```
-
-Lệnh train mẫu (chạy sau Setup):
-
-```python
-out = RUNS / 'baseline' / 'fold2' / 'seed0'
-cmd = [sys.executable, 'train_contrastive.py', 'train', '--variant', 'baseline', '--seed', '0',
-       '--arc', 'resnet50', '--data-root', str(DATA), '--manifest', str(SPLITS / 'fold2.json'),
-       '--output', str(out), '--epochs', '20', '--batch-size', '32', '--workers', '2']
-if (out / 'last.pt').exists():
-    cmd += ['--resume', str(out / 'last.pt')]
-subprocess.run(cmd, check=True)
-```
+Quy tắc cho mọi cell:
+- Token chỉ đọc qua `userdata.get('GH_TOKEN')`, không bao giờ in ra. Hàm `git()` **không** dùng `check=True`, vì `CalledProcessError` in nguyên lệnh, kể cả header chứa token (đã từng lộ token một lần ngày 20/11, phải thu hồi). Nếu output nào hiện `Authorization: Basic ...`, thu hồi token ngay.
+- Colab **không hiện** stdout của tiến trình con (`subprocess.run` không capture). Muốn thấy tiến trình thì dùng `Popen` và đọc từng dòng, đồng thời ghi log vào `MyDrive/Sym/logs/`.
+- Train chỉ chạy khi `DATA` nằm trong `/content` (đã giải nén `DISFA_img.tar`). Đọc ảnh thẳng từ Drive đã làm 10/26 lần train bị dừng.
+- `EPOCHS`, `BATCH`, `WORKERS` của một run phải giữ nguyên qua các lần resume.
 
 ## 6. Quyết định giao thức đã chốt
 
 - Thứ tự 8 AU: `1, 2, 4, 6, 9, 12, 25, 26`; intensity ≥ 2 là dương. Chia 3 fold theo subject, mỗi fold 3 subject làm val bên trong.
-- Inner val (20/11): `splits_v2`, sinh bằng `experiment_data.py --split-seed 2026 --val-subjects 3 --min-val-positive 100`. Fold 2/3 trùng bản cũ, fold 1 rút lại, vì val cũ có AU2 = 4 frame và AU1 = 73 frame, tất cả từ một subject.
+- Inner val (20/11): `splits_v2`, sinh bằng `experiment_data.py --split-seed 2026 --val-subjects 3 --min-val-positive 100`. Fold 2/3 trùng bản cũ, fold 1 rút lại, vì val cũ có AU2 = 4 frame và AU1 = 73 frame, tất cả từ một subject. Val fold 1 mới là SN002, SN016, SN032. **Chủ dự án đã chọn giữ `splits_v2`** dù fit fold 1 mất khoảng 45% số frame AU1/AU2/AU26 (AU2 còn 1098); đã cân nhắc mức trần "val ≤ 1/3" và không chọn. Không tự sinh lại split.
 - Bỏ variant `current` (12/11). Các variant chính: `baseline` và `full`.
 - Mọi lựa chọn (checkpoint, ngưỡng, λ, luật) **chỉ** dựa trên inner val. Outer test chỉ mở **một lần**, sau khi đã chốt thiết kế.
 - Test đã bị mở trên detector cũ (29/10 cho Tầng 1, 13/11 cho Tầng 2). Các số đó chỉ là **thăm dò**; không so trực tiếp với run mới.
@@ -150,7 +85,8 @@ subprocess.run(cmd, check=True)
 
 ## 7. Việc đang mở (cập nhật 20/11/2026)
 
-- Đóng gói `DISFA/img` thành `MyDrive/Sym/DISFA_img.tar` (làm trên Colab, từ Drive). Hiện 10/26 lần train bị dừng vì Drive báo `FileNotFoundError` với ảnh vẫn có thật.
-- Sinh `splits_v2` trên Colab (code đã có, xem đề cương §3). Phải xong trước run đầu tiên dùng `splits_v2`.
-- Thống nhất Tầng 2 về `stage2_decoder`: sửa đường dẫn `evaluation/` → `evaluation_val/` cho val, thêm nhánh `R_FACS`, lấy R0 làm nhánh chính. C1 (chỉnh ngưỡng trên 3 subject val) làm điểm test giảm tới 4 điểm.
-- Pilot `baseline` + `full`, fold 2, `runs_aug1`.
+`splits_v2` đã sinh xong ngày 20/11.
+
+1. Đóng gói `DISFA/img` thành `MyDrive/Sym/DISFA_img.tar`: cell A trong `COLAB_CELLS.md`. Bước này chặn mọi run train.
+2. Pilot `baseline` + `full`, fold 2, `runs_aug1`: cell B, kiểm bằng cell C.
+3. Song song (code ở local, không chặn train): thống nhất Tầng 2 về `stage2_decoder`: sửa đường dẫn `evaluation/` → `evaluation_val/` cho val, thêm nhánh `R_FACS`, lấy R0 làm nhánh chính. C1 (chỉnh ngưỡng trên 3 subject val) làm điểm test giảm tới 4 điểm.
