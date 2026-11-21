@@ -451,6 +451,146 @@ print(f'Chi tiết: {SMOKE}/results/<variant>/fold<k>/seed0/decode_val.json | lu
 
 ---
 
+## F. Báo cáo log — gom trạng thái thành 1 file để gửi Claude (CPU, không cần Setup/token)
+
+Có sẵn dạng notebook: [notebooks/Bao_cao_log.ipynb](notebooks/Bao_cao_log.ipynb).
+- Ghi `MyDrive/Sym/reports/status_<ngày>_<giờ>.md` và tự tải về máy.
+- Nội dung: tóm tắt mọi run, bảng theo epoch của `runs_aug*`, Tầng 2 chỉ val, đuôi 8 log mới nhất.
+- Không in số test. Nếu log có token, cell tự che đi.
+
+```python
+# ==== Cell F: gom trạng thái run + Tầng 2 + đuôi log thành 1 file .md để gửi Claude (chỉ đọc, không cần GPU/token) ====
+import os, re, json
+from pathlib import Path
+from datetime import datetime, timezone, timedelta
+from google.colab import drive, files
+
+if not os.path.isdir('/content/drive/MyDrive'):
+    drive.mount('/content/drive')
+SYM    = Path('/content/drive/MyDrive/Sym')
+AU     = [1, 2, 4, 6, 9, 12, 25, 26]
+VN     = timezone(timedelta(hours=7))
+NOW    = datetime.now(VN)
+DETAIL = ('runs_aug1', 'runs_aug2', 'runs_aug3')   # in bảng theo epoch; thư mục khác chỉ in tóm tắt
+N_LOGS, TAIL = 8, 40                               # số log mới nhất được in đuôi, số dòng cuối mỗi log
+FENCE = '`' * 3                                    # viết gián tiếp để cell nhúng được trong khối code markdown
+out = []
+w = out.append
+
+def rd(p):
+    try:
+        return json.loads(Path(p).read_text())
+    except Exception:
+        return None
+
+def age(p):
+    m = datetime.fromtimestamp(p.stat().st_mtime, VN)
+    return f'{m:%d/%m %H:%M} ({(NOW - m).total_seconds() / 60:.0f} phút trước)'
+
+def points(h, end_only=False):
+    return [(c['progress'], c['val']) for r in h
+            for c in ([dict(progress=r['epoch'], val=r['val'])] if end_only or 'val_checks' not in r else r['val_checks'])]
+
+def short_line(line):
+    """Dòng JSON cuối epoch rất dài (tp/fp/fn, val_checks) → rút gọn; bỏ dòng tiến độ step."""
+    if line.startswith('{"epoch"'):
+        try:
+            r = json.loads(line)
+            return f"ep{r['epoch']} wa={r['train']['wa']:.4f} valF1={r['val']['macro_f1']:.4f} {r['seconds'] / 60:.1f} phút"
+        except Exception:
+            return line[:200]
+    if re.match(r'epoch \d+/\d+ step \d+/\d+', line):
+        return None
+    return line[:300]
+
+w(f'# Báo cáo trạng thái Thesis_Sym — {NOW:%d/%m/%Y %H:%M} (giờ VN)\n')
+w('## Dữ liệu')
+w(f"- DISFA_img/DONE.json: {'có' if (SYM / 'DISFA_img' / 'DONE.json').exists() else 'CHƯA'}")
+w(f"- splits_v2: {sorted(p.name for p in (SYM / 'splits_v2').glob('*.json'))}")
+
+w('\n## Run Tầng 1')
+for root in sorted(p for p in SYM.glob('runs_*') if p.is_dir()):
+    runs = sorted(c.parent for c in root.glob('*/fold*/seed*/config.json'))
+    if not runs:
+        continue
+    w(f'\n### {root.name} ({len(runs)} run)')
+    for run in runs:
+        cfg, h = rd(run / 'config.json') or {}, rd(run / 'history.json') or []
+        src = cfg.get('source_hashes', {})
+        w(f"\n**{'/'.join(run.parts[-3:])}** — {len(h)}/{cfg.get('epochs')} epoch"
+          + (f" | last.pt sửa {age(run / 'last.pt')}" if (run / 'last.pt').exists() else ' | chưa có last.pt'))
+        w(f"- config: batch {cfg.get('batch_size')}, workers {cfg.get('workers')}, lr {cfg.get('lr')}, "
+          f"ema {cfg.get('ema_decay', 0)}, val/epoch {cfg.get('val_per_epoch', 1)}, bb_lr×{cfg.get('backbone_lr_mult', 1)}, "
+          f"torch {cfg.get('environment_versions', {}).get('torch')}, "
+          f"hash train_contrastive {src.get('train_contrastive.py', '')[:8]} / experiment_data {src.get('experiment_data.py', '')[:8]}")
+        if not h:
+            continue
+        pa, va = max(points(h), key=lambda x: x[1]['macro_f1'])
+        pe, ve = max(points(h, True), key=lambda x: x[1]['macro_f1'])
+        w(f"- val tốt nhất {va['macro_f1']:.4f} @ {pa:g} | chỉ cuối epoch {ve['macro_f1']:.4f} @ {pe:g} | "
+          f"epoch cuối {h[-1]['val']['macro_f1']:.4f} | wa cuối {h[-1]['train']['wa']:.4f}")
+        w('- F1/AU tại best: ' + ' '.join(f'AU{a}:{x:.3f}' for a, x in zip(AU, va['per_au_f1'])))
+        ev = [f'{d}/{f}' for d in ('evaluation_val', 'evaluation') for f in ('val_metrics.json', 'test_metrics.json')
+              if (run / d / f).exists()]
+        if ev:
+            vm = next((rd(run / d / 'val_metrics.json') for d in ('evaluation_val', 'evaluation')
+                       if (run / d / 'val_metrics.json').exists()), None)
+            w(f"- evaluate có: {', '.join(ev)}"
+              + (f" | val F1 {vm['macro_f1']:.4f} @ {vm.get('selected_progress', vm.get('selected_epoch'))}" if vm else '')
+              + ' (không in số test)')
+        if root.name in DETAIL:
+            w('\n| ep | wa | we | global | node | cross | val cuối ep | val giữa ep | phút |')
+            w('|---|---|---|---|---|---|---|---|---|')
+            for r in h:
+                t = r['train']
+                mid = ' '.join(f"{c['val']['macro_f1']:.3f}" for c in r.get('val_checks', [])[:-1])
+                w(f"| {r['epoch']} | {t['wa']:.4f} | {t['we']:.4f} | {t['global_con']:.3f} | {t['node_con']:.3f} | "
+                  f"{t['cross_con']:.3f} | {r['val']['macro_f1']:.4f} | {mid} | {r['seconds'] / 60:.1f} |")
+
+w('\n## Tầng 2 — chỉ val (decode_val.json)')
+for name in sorted(p.name for p in SYM.glob('stage2*') if p.is_dir()):
+    res = sorted((SYM / name / 'results').glob('*/fold*/seed*/decode_val.json'))
+    n_test = len(list((SYM / name / 'results').glob('*/fold*/seed*/decode_summary.json')))
+    if not res and not n_test:
+        continue
+    w(f'\n### {name}' + (f' — có {n_test} decode_summary.json (đã mở test, không in số)' if n_test else ''))
+    if res:
+        w('| run | luật | C0 | C1 | R0 | R1 | R_FACS | λ R0 | λ FACS |')
+        w('|---|---|---|---|---|---|---|---|---|')
+    for p in res:
+        d = rd(p)
+        if not d:
+            continue
+        M = d['methods']
+        w(f"| {'/'.join(p.parts[-4:-1])} | {d['n_rules']} | "
+          + ' | '.join(f"{100 * M[m]['val_f1']:.2f}" for m in ('C0', 'C1', 'R0', 'R1', 'R_FACS'))
+          + f" | {M['R0']['lambda_']:g} | {M['R_FACS']['lambda_']:g} |")
+
+w('\n## Log mới nhất (MyDrive/Sym/logs)')
+logs = sorted((SYM / 'logs').glob('*.log'), key=lambda p: p.stat().st_mtime, reverse=True)
+w('\n'.join(f'- {p.name} — {p.stat().st_size / 1e3:.0f} KB, sửa {age(p)}' for p in logs[:2 * N_LOGS]))
+for p in logs[:N_LOGS]:
+    kept = [s for s in map(short_line, p.read_text(errors='replace').splitlines()) if s]
+    w(f'\n### {p.name} — {TAIL} dòng cuối (đã bỏ dòng tiến độ step)\n{FENCE}text')
+    w('\n'.join(kept[-TAIL:]))
+    w(FENCE)
+
+text = '\n'.join(out) + '\n'
+# Chặn rò token nếu lỡ có trong log (đã từng lộ một lần ngày 20/11)
+text = re.sub(r'Authorization:\s*\S+(\s+\S+)?|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}', '[ĐÃ ẨN]', text)
+name = f'status_{NOW:%Y%m%d_%H%M}.md'
+(SYM / 'reports').mkdir(exist_ok=True)
+(SYM / 'reports' / name).write_text(text)
+Path('/content', name).write_text(text)
+for line in out:
+    if line.startswith(('\n**', '- val tốt nhất', '\n### runs')):
+        print(line.strip())
+print(f'\nĐã ghi {len(text) / 1e3:.0f} KB → MyDrive/Sym/reports/{name}; đang tải về máy...')
+files.download(f'/content/{name}')
+```
+
+---
+
 ## Phụ lục
 
 **Kéo log và kết quả về máy để phân tích** (bỏ ảnh, nhãn gốc, trọng số):

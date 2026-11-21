@@ -7,6 +7,10 @@ data/
 # ===== Kết quả chạy — giữ trên Drive =====
 /runs/
 /runs_retry1/
+/runs_*/
+/splits_v2/
+/stage2_*/
+/DISFA_img/
 /runs_swin_probe/
 /failed_runs/
 /logs/
