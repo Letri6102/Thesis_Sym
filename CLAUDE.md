@@ -111,4 +111,14 @@ Quy tắc cho mọi cell:
    - Code và test nằm ở nhánh **`stage1-ema-valchecks`**. Nhánh này sửa file bị hash (`train_contrastive.py`, `EXPERIMENT_PROTOCOL.md`), nên **chỉ merge vào `main` sau khi pilot `runs_aug1` xong**.
    - Chạy thử bằng cell B2 (ghi vào `runs_aug2`), so sánh bằng cell C2. Được chạy song song với pilot ở một phiên khác, với Setup đặt `BRANCH = 'stage1-ema-valchecks'`.
    - Sau khi merge thì **không sửa file bị hash nào nữa** cho tới khi `runs_aug2` xong, vì merge fast-forward giữ nguyên byte của code.
+   - **B2 chạy xong ngày 21/11** trên L4, mỗi epoch 9 phút (đã gồm 4 lần đánh giá val), tức khoảng 3 giờ mỗi run.
+
+     | | val tốt nhất | tốt nhất (chỉ cuối epoch) | epoch 20 | `wa` cuối |
+     |---|---|---|---|---|
+     | `baseline` | 0.685 @4.5 | 0.681 @5 | 0.640 | 0.0095 |
+     | `full` | 0.682 @2.5 | 0.674 @4 | 0.613 | 0.0106 |
+     | run cũ `baseline` (không aug, cùng val fold 2) | 0.715 @1 | | 0.685 | 0.0000 |
+     | run cũ `full` | 0.705 @1 | | 0.670 | |
+
+     **Kết luận:** đỉnh val đến muộn hơn và `wa` không còn về 0, nhưng đỉnh **thấp hơn run cũ khoảng 3 điểm**, và val vẫn tụt sau epoch 5. Chưa tách được nguyên nhân là augmentation mạnh hay EMA/LR; cần pilot `runs_aug1` (chỉ augmentation) để so. **Chưa giữ gói này.**
 6. Tuỳ chọn, cho Q2b: Stage 2/3 của SymGraphAU trong `MultiviewSymAU-master/` (đồ thị CNF + GCN) còn lỗi sigmoid hai lần và mất dấu phủ định. Đây không phải phương pháp chính; nếu không kịp thì Q2b trả lời bằng lập luận (đề cương §1).
