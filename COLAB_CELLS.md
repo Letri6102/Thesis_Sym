@@ -330,8 +330,15 @@ Quy tắc giữ gói thay đổi:
 - Giữ nếu con số "cuối epoch" của `runs_aug2` **không thấp hơn** pilot.
 - Chỉ gọi là "tốt hơn" khi hơn rõ, cỡ 0.5 điểm trở lên. Một fold và một seed không đủ để phân biệt mức chênh nhỏ hơn.
 
+Cell này chỉ đọc file JSON, nên chạy được ở bất kỳ phiên nào, kể cả phiên CPU và không cần Setup. Pilot chưa xong cũng chạy được: cell in số epoch đã có và điểm tốt nhất tính tới lúc đó.
+
 ```python
-import json
+import os, json
+from pathlib import Path
+from google.colab import drive
+if not os.path.isdir('/content/drive/MyDrive'):
+    drive.mount('/content/drive')
+SYM = Path('/content/drive/MyDrive/Sym')
 AU = [1, 2, 4, 6, 9, 12, 25, 26]
 def points(h, end_only=False):
     return [(c['progress'], c['val']) for r in h
