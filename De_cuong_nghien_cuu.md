@@ -3,7 +3,10 @@
 **Dữ liệu:** DISFA · 8 AU (1, 2, 4, 6, 9, 12, 25, 26) · 27 subject · 130.815 frame (27 × 4.845)
 **Giao thức:** 3-fold chia theo subject, mỗi subject nằm trong outer test đúng một lần. Trong outer train, 3 subject làm inner val (split seed 2026). Outer test chỉ mở một lần, sau khi đã chốt thiết kế.
 **Đối chứng:** SymGraphAU (Pattern Recognition 165, 2025) — **62.94** macro-F1 trên DISFA, backbone ResNet-50.
-> [cần kiểm] `paper.txt` trong thư mục dự án là bài FoolsGold, không phải SymGraphAU. Cần bản PDF để xác nhận con số 62.94, backbone, và cách paper chọn epoch/ngưỡng (xem §5, so sánh cùng giao thức).
+> **Đã kiểm bằng PDF (21/11), chi tiết ở [CONTEXT.md](CONTEXT.md):**
+> - Table 2 của paper ghi ResNet-50 = 63.0. Trung bình 8 AU tính lại là 62.94. Swin-B = 64.5.
+> - Ablation trên DISFA với ResNet-50: Baseline 61.2 → JFL 62.1 → JFL+EKR 63.0.
+> - Paper **không** mô tả tập val, cách chọn epoch, ngưỡng quyết định hay số seed.
 
 **Ngày lập:** 13/11/2026 · **Bản 2:** 13/11/2026, sửa sau khi đối chiếu với code. **Cập nhật 19/11:** thêm §2.4 từ `history.json` của 9 run trên Drive; ghi bản sửa augmentation đã có trên Drive. Bản gốc: `De_cuong_nghien_cuu.v1.md`. Danh sách thay đổi ở §8.
 
@@ -276,7 +279,7 @@ Cộng các mức thấp được 62.78 và các mức cao được 66.5, nhưng
 **Xung đột giữa refit và Tầng 2.** Sau khi refit trên `fit + inner val` thì không còn val để chọn λ (và tune ngưỡng C1 ở nhánh phụ). Cách xử lý: lấy λ và `t_i` từ mô hình (a), áp nguyên cho mô hình (b), và ghi rõ đây là chuyển giao tham số. Không tune lại trên test.
 
 **Cảnh báo phải nêu trong luận văn:**
-- Đòn bẩy chắc nhất (Swin-B) là backbone của chính paper.
+- Đòn bẩy chắc nhất (Swin-B) là backbone của chính paper. **Paper có số riêng cho Swin-B trên DISFA: 64.5** (21/11). Vì vậy dòng "Đổi sang Swin-B" trong bảng trên **không** được dùng để vượt 62.94. Đổi sang Swin-B thì mốc phải vượt là 64.5.
 - Khớp giao thức và tune ngưỡng là vệ sinh nghiên cứu; sửa quá khớp là sửa lỗi.
 - Đóng góp thật chỉ còn **contrastive ở Tầng 1** và **decoder ở Tầng 2**. Nếu vượt 62.94 mà toàn bộ phần vượt đến từ Swin-B thì hội đồng sẽ hỏi đúng câu đó.
 - Vì vậy bảng chính phải tách đóng góp theo từng khoản, đo trên cùng backbone.

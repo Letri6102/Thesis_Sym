@@ -2,6 +2,12 @@
 
 Luận văn: nhận diện AU trên DISFA. Tầng 1 là detector contrastive, Tầng 2 là luật rút từ dữ liệu cộng giải mã MAP chính xác.
 Kế hoạch nghiên cứu và trạng thái hiện tại nằm ở [De_cuong_nghien_cuu.md](De_cuong_nghien_cuu.md). Đọc file đó trước khi đề xuất thí nghiệm.
+Baseline SymGraphAU, các số cần vượt và các hướng cải tiến đã đề xuất nằm ở [CONTEXT.md](CONTEXT.md).
+Mốc chính trên DISFA:
+- ResNet-50: **63.0** (62.94). Paper: JFL 62.1, Baseline 61.2.
+- Swin-B: **64.5**.
+
+Mỗi backbone phải so với số của chính backbone đó.
 
 ## 1. Quy tắc bắt buộc (quyết định của chủ dự án, 20/11/2026)
 
@@ -66,6 +72,7 @@ Contrastive_V1/remote_stage2/ script cho máy remote (runs_retry1, splits cũ) �
 MultiviewSymAU-master/       bản cài đặt lại SymGraphAU (Stage 2/3 cũ) để đối chiếu
 Tang2_Decoder.ipynb          Tầng 2 bản notebook 13/11 — LỖI THỜI, lệch đề cương; dùng stage2_decoder
 De_cuong_nghien_cuu.md       đề cương bản 2
+CONTEXT.md                   baseline SymGraphAU (paper), số cần vượt, đối chiếu pipeline, hướng cải tiến
 ```
 
 `Contrastive_V1/COLAB_PRO.md` và `notebooks/Colab_Contrastive_V1.ipynb` đã **lỗi thời**: hai file này giả định code nằm ở `MyDrive/SymAU` trên Drive. Dùng mục 5 thay thế.
