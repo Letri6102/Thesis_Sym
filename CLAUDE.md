@@ -53,6 +53,7 @@ runs_aug1/                   run mới với strong_train_aug
 runs_swin_probe/             dò Swin-B (đang rỗng)
 stage2_v2/                   Tầng 2 chuẩn (stage2_decoder): rules/fold{k}/, results/<variant>/fold{k}/seed{s}/, summary.json
 stage2_out/                  Tầng 2 bản notebook 13/11 trên detector cũ — chỉ là thăm dò
+stage2_smoke_retry1/         cell E: chạy thử stage2_decoder trên runs_retry1 + splits cũ, CHỈ VAL — kiểm module, không báo cáo
 failed_runs/, logs/, reports/
 Contrastive_V1/checkpoints/resnet50-19c8e357.pth   trọng số ImageNet
 ```
@@ -98,3 +99,5 @@ Quy tắc cho mọi cell:
 1. ~~Đóng gói ảnh~~ **XONG 21/11**: 27 tar trong `MyDrive/Sym/DISFA_img/` cùng `DONE.json`, tổng 8,65 GB, chạy hết 100 phút. Không chạy lại cell A.
 2. Pilot `baseline` + `full`, fold 2, `runs_aug1`: cell B, kiểm bằng cell C.
 3. Sau pilot: chạy Tầng 2 chỉ trên val (cell D) cho fold 2. Phần code Tầng 2 đã thống nhất xong ngày 20/11.
+4. Song song với pilot: cell E chạy thử `stage2_decoder` trên 6 run cũ (baseline/full × 3 fold), chỉ val, trên phiên CPU với Setup `IMAGES = False`. Mục đích là kiểm module chạy được trên dữ liệu thật; số liệu thu được không dùng để báo cáo.
+5. Tuỳ chọn, cho Q2b: Stage 2/3 của SymGraphAU trong `MultiviewSymAU-master/` (đồ thị CNF + GCN) còn lỗi sigmoid hai lần và mất dấu phủ định. Đây không phải phương pháp chính; nếu không kịp thì Q2b trả lời bằng lập luận (đề cương §1).

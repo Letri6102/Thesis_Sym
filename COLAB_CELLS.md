@@ -29,6 +29,7 @@ SYM      = Path('/content/drive/MyDrive/Sym')
 SPLITS   = SYM / 'splits_v2'           # manifest mới; splits/ cũ chỉ cho runs_retry1
 RUNS     = SYM / 'runs_aug1'           # run mới với strong_train_aug
 LOGS     = SYM / 'logs'
+IMAGES   = True                        # False: không giải nén ảnh (phiên CPU chỉ chạy Tầng 2, cell E)
 
 tok  = userdata.get('GH_TOKEN')
 auth = 'http.extraHeader=Authorization: Basic ' + base64.b64encode(f'x-access-token:{tok}'.encode()).decode()
@@ -49,7 +50,7 @@ print('commit:', subprocess.run(['git', 'log', '-1', '--format=%h %s'], cwd=REPO
                                 capture_output=True, text=True).stdout.strip())
 
 SHARDS = SYM / 'DISFA_img'                     # 27 tar theo subject, do cell A tạo
-if (SHARDS / 'DONE.json').exists():
+if IMAGES and (SHARDS / 'DONE.json').exists():
     DATA = Path('/content/DISFA')
     if not (DATA / '.img_ok').exists():        # chưa giải nén, hoặc lần trước giải nén dở
         t0, meta = time.time(), json.loads((SHARDS / 'DONE.json').read_text())
@@ -297,6 +298,74 @@ run_logged([sys.executable, '-u', '-m', 'stage2_decoder.run_all', '--runs', RUNS
 ```
 
 **Mở test** (chỉ làm **một lần**, sau khi đã chốt Tầng 1 và đủ 3 fold): dùng đúng lệnh trên nhưng **bỏ** `'--val-only'` và để `FOLDS = [1, 2, 3]`. Lệnh sẽ evaluate test, decode và gộp bằng `summarize` thành `stage2_v2/summary.json`. So sánh chính là `R0 − C0`.
+
+---
+
+## E. Chạy thử Tầng 2 trên 6 run cũ — CHỈ VAL, CPU, chạy song song với pilot được
+
+Mục đích: kiểm module `stage2_decoder` chạy đúng trên dữ liệu thật (đường dẫn, file dự đoán, manifest) mà **không** phải chờ pilot. Đây **không** phải số báo cáo:
+- detector cũ quá khớp, và test của nó đã bị mở;
+- λ và ngưỡng được chọn trên chính val này, nên `R0 ≥ C0` trên val gần như do cách chọn (λ = 0 nằm trong lưới), không phải bằng chứng;
+- val fold 1 của split cũ chỉ có 4 frame AU2, nên F1 của AU2 và ngưỡng C1 ở fold 1 không có nghĩa.
+
+Cách chạy: mở một phiên Colab **CPU** riêng. Chạy cell Setup với `IMAGES = False` để khỏi giải nén ảnh, rồi chạy cell này.
+- Cell chỉ **đọc** `runs_retry1` (đang đóng băng) và manifest cũ `splits/`. Kết quả ghi vào `MyDrive/Sym/stage2_smoke_retry1/`.
+- Cell không bao giờ gọi `evaluate`. Nếu run nào thiếu `val_predictions.npz`, cell dừng trước khi chạy bất cứ gì.
+- Chạy lại an toàn: bước nào đã có kết quả thì bỏ qua. Dự kiến vài phút.
+
+```python
+# ==== Cell E: chạy thử Tầng 2 trên 6 run cũ (runs_retry1), CHỈ VAL, CPU — kiểm module, không lấy số báo cáo ====
+import hashlib
+OLD_RUNS   = SYM / 'runs_retry1'            # ĐÓNG BĂNG: cell này chỉ đọc, không evaluate lại
+OLD_SPLITS = SYM / 'splits'                 # manifest cũ mà các run này đã train
+LISTS      = SYM / 'DISFA'                  # Tầng 2 chỉ đọc list + nhãn, không đọc ảnh
+SMOKE      = SYM / 'stage2_smoke_retry1'    # thư mục riêng, không lẫn với stage2_v2
+VARIANTS, FOLDS, SEED = ['baseline', 'full'], [1, 2, 3], 0
+ARMS = ['C0', 'C1', 'R0', 'R1', 'R_FACS']
+
+# 1) Kiểm trước: mỗi run phải có sẵn dự đoán val và đúng manifest cũ. Thiếu thì dừng, KHÔNG evaluate.
+problems = []
+for v in VARIANTS:
+    for k in FOLDS:
+        run = OLD_RUNS / v / f'fold{k}' / f'seed{SEED}'
+        pdir = next((run / d for d in ('evaluation_val', 'evaluation') if (run / d / 'val_predictions.npz').exists()), None)
+        if pdir is None or not (pdir / 'val_metrics.json').exists():
+            problems.append(f'{v}/fold{k}: thiếu val_predictions.npz hoặc val_metrics.json')
+        elif json.loads((run / 'config.json').read_text())['manifest_hash'] != \
+                hashlib.sha256((OLD_SPLITS / f'fold{k}.json').read_bytes()).hexdigest():
+            problems.append(f'{v}/fold{k}: run được train với manifest khác splits/fold{k}.json')
+assert not problems, 'Dừng, chưa chạy gì:\n  ' + '\n  '.join(problems)
+print(f'Đủ dự đoán val cho {len(VARIANTS) * len(FOLDS)} run cũ.', flush=True)
+
+# 2) Rút luật từ nhãn fit của splits cũ (vài giây mỗi fold)
+for k in FOLDS:
+    if not (SMOKE / 'rules' / f'fold{k}' / 'rules.json').exists():
+        run_logged([sys.executable, '-u', '-m', 'stage2_decoder.build_rules', '--data-root', LISTS,
+                    '--manifest', OLD_SPLITS / f'fold{k}.json', '--output', SMOKE / 'rules'], f'smoke_rules_fold{k}')
+
+# 3) Giải mã chỉ trên val (decode chỉ đọc run, ghi vào SMOKE)
+for v in VARIANTS:
+    for k in FOLDS:
+        if (SMOKE / 'results' / v / f'fold{k}' / f'seed{SEED}' / 'decode_val.json').exists():
+            continue
+        run_logged([sys.executable, '-u', '-m', 'stage2_decoder.decode',
+                    '--run', OLD_RUNS / v / f'fold{k}' / f'seed{SEED}', '--rules', SMOKE / 'rules' / f'fold{k}',
+                    '--manifest', OLD_SPLITS / f'fold{k}.json', '--data-root', LISTS,
+                    '--output', SMOKE / 'results', '--val-only'], f'smoke_decode_{v}_fold{k}')
+
+# 4) Tóm tắt
+print('\nVAL macro-F1 (%). λ và ngưỡng chọn trên CHÍNH val này → số lạc quan, chỉ để kiểm module.')
+print(f"{'run':<15}{'ep':>4}{'luật':>6}" + ''.join(f'{m:>8}' for m in ARMS) + f"{'λ R0':>7}{'λ FACS':>8}{'R0−C0':>8}")
+for v in VARIANTS:
+    for k in FOLDS:
+        d = json.loads((SMOKE / 'results' / v / f'fold{k}' / f'seed{SEED}' / 'decode_val.json').read_text())
+        M = d['methods']
+        print(f'{v}/fold{k}'.ljust(15) + f"{str(d['selected_epoch']):>4}{d['n_rules']:>6}"
+              + ''.join(f"{100 * M[m]['val_f1']:>8.2f}" for m in ARMS)
+              + f"{M['R0']['lambda_']:>7g}{M['R_FACS']['lambda_']:>8g}"
+              + f"{100 * (M['R0']['val_f1'] - M['C0']['val_f1']):>+8.2f}")
+print(f'Chi tiết: {SMOKE}/results/<variant>/fold<k>/seed0/decode_val.json | luật: {SMOKE}/rules/fold<k>/rules_all.csv')
+```
 
 ---
 
