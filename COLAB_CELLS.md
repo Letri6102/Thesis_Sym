@@ -40,7 +40,8 @@ def git(*args, cwd=None):
         raise RuntimeError(f'git {args[0]} lỗi (exit {r.returncode}): {r.stderr.strip()}')
 try:
     if (REPO / '.git').exists():
-        git('fetch', '-q', 'origin', BRANCH, cwd=REPO)
+        # refspec đầy đủ: bản clone 1 nhánh vẫn đổi được sang nhánh khác (fetch tên trơn chỉ cập nhật FETCH_HEAD)
+        git('fetch', '-q', '--depth', '1', 'origin', f'+refs/heads/{BRANCH}:refs/remotes/origin/{BRANCH}', cwd=REPO)
         git('reset', '-q', '--hard', f'origin/{BRANCH}', cwd=REPO)
     else:
         git('clone', '-q', '--depth', '1', '-b', BRANCH, REPO_URL, str(REPO))
