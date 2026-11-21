@@ -14,6 +14,13 @@ from pathlib import Path
 from .core import digest, prediction_dir
 
 
+def best_point(hist):
+    """Giống train_contrastive.best_point: chọn trên mọi lần đánh giá val (val_checks nếu có), hoà → sớm hơn."""
+    pts = [(c["progress"], c["val"]) for r in hist
+           for c in (r.get("val_checks") or [dict(progress=r["epoch"], val=r["val"])])]
+    return max(pts, key=lambda pv: pv[1]["macro_f1"])
+
+
 def status(run, do_hash):
     r = dict(run=str(run), actions=[], notes=[])
     cfgp, hp, best = run / "config.json", run / "history.json", run / "best.pt"
@@ -29,10 +36,10 @@ def status(run, do_hash):
         r["state"] = "đang train dở"
         r["actions"].append("resume" if (run / "last.pt").exists() else "train lại (thiếu last.pt)")
         return r
-    sel = max(hist, key=lambda x: x["val"]["macro_f1"])        # max() giữ epoch sớm nhất khi hoà
-    r.update(best_epoch=sel["epoch"], val_f1=round(100 * sel["val"]["macro_f1"], 2))
-    if sel["epoch"] <= 2:
-        r["notes"].append(f"best ở epoch {sel['epoch']}/{total}")
+    sel, sel_val = best_point(hist)
+    r.update(best_epoch=sel, val_f1=round(100 * sel_val["macro_f1"], 2))
+    if sel <= 2:
+        r["notes"].append(f"best ở epoch {sel:g}/{total}")
     if not best.exists():
         r["state"] = "THIẾU best.pt"
         r["actions"].append("tải best.pt về (đã train xong nhưng file không có ở đây)")
@@ -44,8 +51,9 @@ def status(run, do_hash):
         if mj.exists() and nz.exists():
             m = json.loads(mj.read_text(encoding="utf-8"))
             hashes[split] = m["checkpoint_hash"]
-            if m.get("selected_epoch") != sel["epoch"]:
-                r["notes"].append(f"{split}_metrics từ epoch {m.get('selected_epoch')} ≠ best {sel['epoch']}")
+            got = m.get("selected_progress", m.get("selected_epoch"))
+            if got != sel:
+                r["notes"].append(f"{split}_metrics từ epoch {got} ≠ best {sel:g}")
             if split == "test":
                 r["test_f1"] = round(100 * m["macro_f1"], 2)
         else:
