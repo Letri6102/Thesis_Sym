@@ -22,7 +22,7 @@ if not os.path.isdir('/content/drive/MyDrive'):
     drive.mount('/content/drive')
 
 REPO_URL = 'https://github.com/Letri6102/Thesis_Sym.git'
-BRANCH   = 'main'                      # 'stage1-ema-valchecks': chỉ ở phiên chạy cell B2 khi nhánh chưa merge
+BRANCH   = 'main'                      # nhánh stage1-ema-valchecks đã merge vào main (21/11)
 REPO     = Path('/content/Thesis_Sym')
 CODE     = REPO / 'Contrastive_V1'
 SYM      = Path('/content/drive/MyDrive/Sym')
@@ -289,9 +289,7 @@ So với pilot (cell B), cell này giữ nguyên augmentation, split, số epoch
 
 Ba thay đổi này đi chung một gói vệ sinh huấn luyện, không phải đóng góp của luận văn, nên thử gộp một lần.
 
-**Code nằm ở nhánh `stage1-ema-valchecks` cho tới khi pilot xong.** Nhánh này sửa các file bị hash; merge vào `main` lúc pilot đang chạy thì pilot sẽ không resume được nữa.
-- Muốn chạy song song với pilot: mở một phiên GPU **khác**, trong Setup đặt `BRANCH = 'stage1-ema-valchecks'`. Phiên pilot vẫn để `BRANCH = 'main'`.
-- Sau khi pilot xong và nhánh đã merge: dùng `BRANCH = 'main'` như thường.
+**Code đã có trên `main` (merge ngày 21/11, `586b221`).** Dùng Setup bình thường với `BRANCH = 'main'`. `runs_aug2` đã chạy xong ngày 21/11 (kết quả ở CLAUDE.md §7).
 
 `EPOCHS`, `BATCH`, `WORKERS`, `EMA`, `VAL_PER_EPOCH`, `BB_LR` nằm trong config của run, phải giữ nguyên qua mọi lần resume.
 
@@ -380,6 +378,44 @@ run_logged([sys.executable, '-u', '-m', 'stage2_decoder.run_all', '--runs', RUNS
 ```
 
 **Mở test** (chỉ làm **một lần**, sau khi đã chốt Tầng 1 và đủ 3 fold): dùng đúng lệnh trên nhưng **bỏ** `'--val-only'` và để `FOLDS = [1, 2, 3]`. Lệnh sẽ evaluate test, decode và gộp bằng `summarize` thành `stage2_v2/summary.json`. So sánh chính là `R0 − C0`.
+
+---
+
+## D2. Chẩn đoán `runs_aug2`: AU6/AU26 tụt do ngưỡng hay do mất đặc trưng? (GPU khoảng 10 phút, chạy sau Setup)
+
+Ở B2, val tốt nhất mất khoảng 3 điểm so với run cũ, và phần lớn đến từ một số AU:
+
+| AU (`baseline` / `full`) | B2 | run cũ | Chênh |
+|---|---|---|---|
+| AU6 | 0.42 / 0.42 | 0.64 / 0.62 | khoảng −20 |
+| AU26 | 0.43 / 0.47 | 0.55 / 0.50 | −11 / −3 |
+| AU4 | 0.76 / 0.74 | 0.68 / 0.66 | +8 |
+| AU12 | 0.83 / 0.78 | 0.73 / 0.73 | +10 / +5 |
+
+Cell này `evaluate` val cho 2 run, rồi decode **chỉ trên val**. C1 là F1 sau khi chỉnh ngưỡng riêng cho từng AU.
+- **AU6 ở C1 hồi lại khoảng 0.6 với ngưỡng thấp hơn hẳn 0.5:** mô hình vẫn phân biệt được AU6 nhưng **lệch hiệu chỉnh** (xác suất dồn xuống dưới 0.5).
+- **AU6 ở C1 vẫn quanh 0.45:** đặc trưng của AU6 đã mất. Nghi ngờ blur, grayscale và color jitter mạnh xoá nếp nhăn đuôi mắt, đúng thứ AU6 dựa vào [suy luận].
+
+Mốc so sánh từ run cũ `baseline` fold 2 (cell E): C0 71.5 → C1 73.0; AU6 63.8 → 66.9 (ngưỡng 0.38); AU26 54.6 → 60.6.
+
+Kết quả ghi vào `MyDrive/Sym/stage2_aug2/`, tách khỏi `stage2_v2`: hai nơi dùng chung đường dẫn `results/<variant>/fold2/seed0/`, để chung sẽ đè nhau. Cell không đụng outer test.
+
+```python
+RUNS2, OUT2 = SYM / 'runs_aug2', SYM / 'stage2_aug2'
+assert str(DATA).startswith('/content/'), 'evaluate cần ảnh trong /content: chạy Setup với IMAGES = True'
+run_logged([sys.executable, '-u', '-m', 'stage2_decoder.run_all', '--runs', RUNS2, '--splits', SPLITS,
+            '--data-root', DATA, '--output', OUT2, '--variants', 'baseline', 'full',
+            '--folds', 2, '--seeds', 0, '--val-only'], 'stage2_valonly_aug2')
+AU = [1, 2, 4, 6, 9, 12, 25, 26]
+for v in ('baseline', 'full'):
+    d = json.loads((OUT2 / 'results' / v / 'fold2' / 'seed0' / 'decode_val.json').read_text())
+    M = d['methods']
+    print(f"\n{v}: C0 {100 * M['C0']['val_f1']:.2f} → C1 {100 * M['C1']['val_f1']:.2f} (ngưỡng chỉnh trên val)"
+          f" | R0 {100 * M['R0']['val_f1']:.2f} (λ {M['R0']['lambda_']:g})")
+    print('  ngưỡng C1: ' + ' '.join(f'AU{a}:{t:.2f}' for a, t in zip(AU, d['thresholds_c1'])))
+    print('  F1 C0    : ' + ' '.join(f'AU{a}:{100 * x:.1f}' for a, x in zip(AU, M['C0']['val_f1_au'])))
+    print('  F1 C1    : ' + ' '.join(f'AU{a}:{100 * x:.1f}' for a, x in zip(AU, M['C1']['val_f1_au'])))
+```
 
 ---
 

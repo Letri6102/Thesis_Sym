@@ -104,7 +104,7 @@ Quy tắc cho mọi cell:
 `splits_v2` đã sinh xong ngày 20/11.
 
 1. ~~Đóng gói ảnh~~ **XONG 21/11**: 27 tar trong `MyDrive/Sym/DISFA_img/` cùng `DONE.json`, tổng 8,65 GB, chạy hết 100 phút. Không chạy lại cell A.
-2. Pilot `baseline` + `full`, fold 2, `runs_aug1`: cell B, kiểm bằng cell C. Phiên đầu (21/11) chạy trên torch 2.14.1+cu130, torchvision 0.29.1, GPU L4, 12 CPU; Setup giải nén ảnh mất 5,6 phút. Nếu resume bị từ chối vì torch đổi phiên bản, cài lại đúng bản này trước khi resume.
+2. Pilot `baseline` + `full`, fold 2, `runs_aug1`: cell B, kiểm bằng cell C. **Chưa từng chạy:** báo cáo ngày 21/11 lúc 22:21 không thấy `runs_aug1` hay log `train_aug1` nào. Ngày 21/11, Setup đã chạy trên torch 2.14.1+cu130, torchvision 0.29.1, GPU L4, 12 CPU; Setup giải nén ảnh mất 5,6 phút. Nếu resume bị từ chối vì torch đổi phiên bản, cài lại đúng bản này trước khi resume.
 3. Sau pilot: chạy Tầng 2 chỉ trên val (cell D) cho fold 2. Phần code Tầng 2 đã thống nhất xong ngày 20/11.
 4. ~~Cell E~~ **XONG 21/11**: `stage2_decoder` chạy đúng trên 6 run cũ, chỉ val, mất khoảng 30 giây. Kết quả tóm tắt nằm ở đề cương §6 và không dùng để báo cáo. Trên val, `R0 − C0` chỉ từ +0.0 đến +0.9, trong khi C1 − C0 từ +1.5 đến +10.6.
 5. **Gói vệ sinh Tầng 1** gồm EMA, đánh giá val 4 lần/epoch và LR backbone 0.1× (cờ `--ema-decay`, `--val-per-epoch`, `--backbone-lr-mult`, mặc định tắt).
@@ -121,4 +121,11 @@ Quy tắc cho mọi cell:
      | run cũ `full` | 0.705 @1 | | 0.670 | |
 
      **Kết luận:** đỉnh val đến muộn hơn và `wa` không còn về 0, nhưng đỉnh **thấp hơn run cũ khoảng 3 điểm**, và val vẫn tụt sau epoch 5. Chưa tách được nguyên nhân là augmentation mạnh hay EMA/LR; cần pilot `runs_aug1` (chỉ augmentation) để so. **Chưa giữ gói này.**
+   - **Phần tụt tập trung ở vài AU**, và giống nhau ở cả hai variant (`baseline` / `full`, so với run cũ):
+     - AU6: 0.42 / 0.42, run cũ 0.64 / 0.62 — tụt khoảng 20 điểm, riêng AU này đã kéo macro-F1 xuống khoảng 2.5 điểm;
+     - AU26: 0.43 / 0.47, run cũ 0.55 / 0.50;
+     - ngược lại AU4 tăng khoảng 7 điểm, AU12 tăng 5–10 điểm.
+     
+     Cell D2 kiểm xem AU6 tụt vì ngưỡng (lệch hiệu chỉnh) hay vì mất đặc trưng.
+   - **Đã merge vào `main` ngày 21/11 (`586b221`)**, vì không còn run nào đang chạy. Hash các file bị hash trên `main` khớp với config của `runs_aug2`. Nhánh `stage1-ema-valchecks` giờ không cần dùng nữa; Setup để `BRANCH = 'main'`.
 6. Tuỳ chọn, cho Q2b: Stage 2/3 của SymGraphAU trong `MultiviewSymAU-master/` (đồ thị CNF + GCN) còn lỗi sigmoid hai lần và mất dấu phủ định. Đây không phải phương pháp chính; nếu không kịp thì Q2b trả lời bằng lập luận (đề cương §1).

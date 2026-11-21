@@ -137,7 +137,7 @@ Ràng buộc chung:
 | # | Tầng | Thay đổi | Lý do | Chi phí | Trạng thái |
 |---|---|---|---|---|---|
 | 1 | 1 | Augmentation mạnh | run cũ quá khớp (`wa` → 0, val đạt đỉnh ở epoch 1–2) | đã có | **pilot đang chạy** |
-| 2 | 1 | Đánh giá val mỗi ¼ epoch + EMA trọng số | đỉnh val rơi vào epoch 1, nên checkpoint tốt có thể nằm giữa epoch; EMA làm mượt | sửa code nhỏ | **B2 xong 21/11:** val tốt nhất của `baseline` 0.685, trong khi run cũ không aug đạt 0.715. Đỉnh muộn hơn nhưng thấp hơn. Chưa giữ; chờ pilot để tách tác động của aug với EMA/LR |
+| 2 | 1 | Đánh giá val mỗi ¼ epoch + EMA trọng số | đỉnh val rơi vào epoch 1, nên checkpoint tốt có thể nằm giữa epoch; EMA làm mượt | sửa code nhỏ | **B2 xong 21/11:** val tốt nhất của `baseline` 0.685, trong khi run cũ không aug đạt 0.715. Đỉnh muộn hơn nhưng thấp hơn. Phần tụt chủ yếu ở AU6 (khoảng −20 ở cả 2 variant) và AU26; AU4 và AU12 tăng. Chưa giữ. Cần cell D2 (ngưỡng hay đặc trưng) và pilot (aug hay EMA/LR) để tách nguyên nhân. Đã merge vào `main` |
 | 3 | 1 | LR backbone nhỏ hơn head (1e-5 / 1e-4) | fine-tune trên chỉ 15 subject dễ quá khớp. Lưu ý: head + projection có 19.1M tham số, gần bằng backbone ResNet-50 (23.5M), và vẫn giữ lr 1e-4 | sửa code nhỏ | **đã code 21/11**, đi chung gói với mục 2 |
 | 4 | 1 | Contrastive **khác subject**: cặp dương phải đến từ hai subject khác nhau; thêm queue cho node loss | lỗi lớn nhất là lệch giữa subject (ngưỡng C1 lệch xa 0.5, chênh giữa fold ≥ 30 điểm); AU2/AU9 ít mẫu dương trong mỗi batch | variant mới | đóng góp chính, chờ pilot |
 | 5 | 1 | Swin-B | backbone tốt nhất của paper | gấp khoảng 2 lần GPU | chỉ so với 64.5 |
