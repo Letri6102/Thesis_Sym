@@ -45,6 +45,7 @@ Kế hoạch nghiên cứu và trạng thái hiện tại nằm ở [De_cuong_ng
 DISFA/img/SNxxx/N.png        130.814 frame, ảnh 224×224 đã crop
 DISFA/list/                  DISFA_{train,test}_{img_path,label,weight}_fold{1,2,3}.txt
 DISFA/ActionUnit_Labels/     nhãn gốc
+DISFA_img/                   SNxxx.tar (27 tar ảnh theo subject) + SNxxx.json (dấu đã xong) + DONE.json — cell A tạo, Setup giải nén vào /content
 splits/fold{1,2,3}.json      manifest CŨ (seed 2026, 3 subject val) — chỉ cho runs_retry1, không sửa
 splits_v2/fold{1,2,3}.json   manifest MỚI: như cũ + mỗi AU >= 100 frame dương trong val (chỉ fold 1 đổi)
 runs_retry1/                 9 run cũ, KHÔNG augmentation, ĐÓNG BĂNG — chỉ đọc, không ghi thêm
@@ -75,7 +76,8 @@ Mọi cell Colab (Setup, đóng gói ảnh, pilot, kiểm kết quả, kéo log 
 Quy tắc cho mọi cell:
 - Token chỉ đọc qua `userdata.get('GH_TOKEN')`, không bao giờ in ra. Hàm `git()` **không** dùng `check=True`, vì `CalledProcessError` in nguyên lệnh, kể cả header chứa token (đã từng lộ token một lần ngày 20/11, phải thu hồi). Nếu output nào hiện `Authorization: Basic ...`, thu hồi token ngay.
 - Colab **không hiện** stdout của tiến trình con (`subprocess.run` không capture). Muốn thấy tiến trình thì dùng `Popen` và đọc từng dòng, đồng thời ghi log vào `MyDrive/Sym/logs/`.
-- Train chỉ chạy khi `DATA` nằm trong `/content` (đã giải nén `DISFA_img.tar`). Đọc ảnh thẳng từ Drive đã làm 10/26 lần train bị dừng.
+- Train chỉ chạy khi `DATA` nằm trong `/content` (Setup đã giải nén `DISFA_img/`). Đọc ảnh thẳng từ Drive đã làm 10/26 lần train bị dừng.
+- Mọi lần đọc/chép file trên Drive trong vòng lặp dài phải có timeout và chạy lại được (resume). Ngày 21/11, cell A bản một file đứng ở 40.000/130.814 ảnh suốt hơn 12 giờ mà không báo lỗi: một lần đọc Drive bị treo, không có timeout nên chờ mãi.
 - `EPOCHS`, `BATCH`, `WORKERS` của một run phải giữ nguyên qua các lần resume.
 
 ## 6. Quyết định giao thức đã chốt
@@ -93,6 +95,6 @@ Quy tắc cho mọi cell:
 
 `splits_v2` đã sinh xong ngày 20/11.
 
-1. Đóng gói `DISFA/img` thành `MyDrive/Sym/DISFA_img.tar`: cell A trong `COLAB_CELLS.md`. Bước này chặn mọi run train.
+1. Đóng gói `DISFA/img` thành 27 tar theo subject trong `MyDrive/Sym/DISFA_img/`: cell A trong `COLAB_CELLS.md` (bản 21/11, chạy lại được, subject xong thì bỏ qua). Xong khi có `DISFA_img/DONE.json`. Bước này chặn mọi run train.
 2. Pilot `baseline` + `full`, fold 2, `runs_aug1`: cell B, kiểm bằng cell C.
 3. Sau pilot: chạy Tầng 2 chỉ trên val (cell D) cho fold 2. Phần code Tầng 2 đã thống nhất xong ngày 20/11.

@@ -48,17 +48,19 @@ finally:
 print('commit:', subprocess.run(['git', 'log', '-1', '--format=%h %s'], cwd=REPO,
                                 capture_output=True, text=True).stdout.strip())
 
-IMG_TAR = SYM / 'DISFA_img.tar'
-if IMG_TAR.exists():
+SHARDS = SYM / 'DISFA_img'                     # 27 tar theo subject, do cell A tạo
+if (SHARDS / 'DONE.json').exists():
     DATA = Path('/content/DISFA')
-    if not (DATA / 'img').exists():
-        t0 = time.time()
+    if not (DATA / '.img_ok').exists():        # chưa giải nén, hoặc lần trước giải nén dở
+        t0, meta = time.time(), json.loads((SHARDS / 'DONE.json').read_text())
         DATA.mkdir(parents=True, exist_ok=True)
-        shutil.copy(IMG_TAR, '/content/DISFA_img.tar')
-        subprocess.run(['tar', '-xf', '/content/DISFA_img.tar', '-C', str(DATA)], check=True)
-        os.remove('/content/DISFA_img.tar')
+        for s in meta['subjects']:
+            subprocess.run(['tar', '-xf', str(SHARDS / f'{s}.tar'), '-C', str(DATA)], check=True, timeout=1800)
+        n = sum(len(f) for _, _, f in os.walk(DATA / 'img'))
+        assert n == meta['n_images'], f'Giải nén được {n} ảnh, cần {meta["n_images"]}'
         shutil.copytree(SYM / 'DISFA' / 'list', DATA / 'list', dirs_exist_ok=True)
-        print(f'Đã chép ảnh về /content trong {time.time() - t0:.0f}s')
+        (DATA / '.img_ok').touch()
+        print(f'Đã giải nén {n} ảnh về /content trong {time.time() - t0:.0f}s')
 else:
     DATA = SYM / 'DISFA'                 # đọc thẳng Drive: chậm và hay lỗi FileNotFoundError
 print('DATA =', DATA)
@@ -99,22 +101,30 @@ def run_logged(cmd, name):
 
 ---
 
-## A. Đóng gói ảnh thành `DISFA_img.tar` — chạy MỘT lần, không cần GPU
+## A. Đóng gói ảnh thành 27 tar theo subject — chạy lại được, không cần GPU
 
-Cell này không cần cell Setup và không cần token GitHub. Các bước:
-1. đọc 130.814 ảnh từ Drive bằng 16 luồng, mỗi ảnh thử lại tối đa 5 lần;
-2. ghi tar không nén ra `/content` và kiểm đủ số ảnh;
-3. chép lên Drive dưới tên `.partial`, đổi tên khi chép xong (cell Setup không bao giờ dùng nhầm file dở dang);
-4. `flush_and_unmount` để chờ Drive đồng bộ xong.
+Cell này không cần cell Setup và không cần token GitHub. Kết quả nằm trong `MyDrive/Sym/DISFA_img/`:
+- `SNxxx.tar`: ảnh của một subject;
+- `SNxxx.json`: dấu đã xong, ghi số ảnh và số byte của tar;
+- `DONE.json`: chỉ có khi đủ 27 subject. Cell Setup chỉ dùng ảnh khi thấy file này.
 
-Nên chọn runtime **CPU** để khỏi tốn GPU. Mất khoảng 1–3 giờ. Nếu phiên bị ngắt thì chạy lại từ đầu.
-**Đừng tắt tab** trước khi cell in dòng `XONG`.
+Với mỗi subject chưa xong, cell:
+1. đọc khoảng 4.845 ảnh từ Drive bằng 16 luồng, mỗi ảnh thử lại tối đa 5 lần;
+2. ghi tar ra `/content/shards` rồi kiểm đủ ảnh;
+3. chép lên Drive dưới tên `.partial`, đổi tên khi chép xong, rồi mới ghi `SNxxx.json`.
+
+**Resume:** subject nào có `SNxxx.json` khớp với `SNxxx.tar` thì bỏ qua. Bị ngắt phiên chỉ mất subject đang làm dở.
+
+**Chống treo:** bản một file đầu tiên (21/11) đứng ở 40.000/130.814 ảnh suốt hơn 12 giờ mà không báo lỗi, vì đọc file trên Drive không có timeout. Giờ mỗi ảnh chỉ được đọc tối đa 5 phút. Quá hạn thì cell dừng và in `DRIVE TREO`. Khi đó vào **Runtime → Restart session** (không được thì **Disconnect and delete runtime**) rồi chạy lại cell A.
+
+Nên chọn runtime **CPU**. Nếu Drive không treo, toàn bộ mất khoảng 40–60 phút. Cuối cell gọi `flush_and_unmount` để chờ Drive đồng bộ xong: **đừng tắt tab** trước khi cell in dòng `XONG`.
 
 ```python
-# ==== Cell A: đóng gói MyDrive/Sym/DISFA/img thành MyDrive/Sym/DISFA_img.tar (chạy 1 lần) ====
-import os, io, time, shutil, tarfile
+# ==== Cell A: đóng gói MyDrive/Sym/DISFA/img thành MyDrive/Sym/DISFA_img/SNxxx.tar (chạy lại được) ====
+import os, io, json, time, shutil, tarfile
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor
+from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutTimeout
 from google.colab import drive
 
 if not os.path.isdir('/content/drive/MyDrive'):
@@ -122,24 +132,33 @@ if not os.path.isdir('/content/drive/MyDrive'):
 
 SYM   = Path('/content/drive/MyDrive/Sym')
 SRC   = SYM / 'DISFA' / 'img'
-FINAL = SYM / 'DISFA_img.tar'
-TMP   = SYM / 'DISFA_img.tar.partial'
-LOCAL = Path('/content/DISFA_img.tar')
-assert not FINAL.exists(), f'{FINAL} đã có — không cần chạy lại'
-if TMP.exists():
-    TMP.unlink()                               # bản dở dang của lần chạy trước
+OUT   = SYM / 'DISFA_img'                    # SNxxx.tar + SNxxx.json (dấu đã xong) + DONE.json
+LOCAL = Path('/content/shards')
+THREADS, READ_TIMEOUT, COPY_TIMEOUT = 16, 300, 1800   # giây; đọc 1 ảnh bình thường < 1 s
+OUT.mkdir(exist_ok=True)
+LOCAL.mkdir(exist_ok=True)
+assert not (OUT / 'DONE.json').exists(), 'Đã đóng gói đủ 27 subject — không cần chạy lại'
+(SYM / 'DISFA_img.tar.partial').unlink(missing_ok=True)    # rác của cell A bản một file (nếu có)
 
 rel = sorted({p.strip() for k in (1, 2, 3)
               for p in (SYM / 'DISFA' / 'list' / f'DISFA_test_img_path_fold{k}.txt').read_text().split() if p.strip()})
-print(len(rel), 'ảnh cần đóng gói')          # phải là 130814
-assert len(rel) == 130814, 'Số ảnh trong list khác 130814 — dừng lại kiểm tra'
+assert len(rel) == 130814, f'List có {len(rel)} ảnh, cần 130814 — dừng lại kiểm tra'
+by_subj = defaultdict(list)
+for p in rel:
+    by_subj[p.split('/')[0]].append(p)
 
-need = 9e9                                     # ~8.3 GB ảnh + dư
-free_local = shutil.disk_usage('/content').free
-free_drive = shutil.disk_usage('/content/drive').free
-print(f'Trống: /content {free_local / 1e9:.0f} GB | Drive {free_drive / 1e9:.0f} GB')
-assert free_local > need, 'Ổ /content không đủ chỗ cho file tar'
-assert free_drive > need, 'Google Drive không đủ chỗ (cần ~9 GB) — dọn bớt hoặc nâng dung lượng'
+def is_done(s):
+    mark, tar = OUT / f'{s}.json', OUT / f'{s}.tar'
+    if not (mark.exists() and tar.exists()):
+        return False
+    m = json.loads(mark.read_text())
+    return m['n'] == len(by_subj[s]) and m['size'] == tar.stat().st_size
+
+todo = [s for s in sorted(by_subj) if not is_done(s)]
+free = shutil.disk_usage('/content/drive').free
+print(f'{len(rel)} ảnh, {len(by_subj)} subject | đã xong {len(by_subj) - len(todo)}, còn {len(todo)}'
+      f' | Drive trống {free / 1e9:.0f} GB', flush=True)
+assert free > 0.4e9 * len(todo), 'Google Drive không đủ chỗ (~0.35 GB mỗi subject) — dọn bớt'
 
 def read(p, tries=5):
     for t in range(tries):
@@ -150,34 +169,52 @@ def read(p, tries=5):
                 raise
             time.sleep(2 * (t + 1))
 
-# 1) Đọc từ Drive, ghi tar ra ổ cục bộ
+class DriveHang(Exception):
+    pass
+
+def wait(fut, timeout, what):
+    try:
+        return fut.result(timeout=timeout)
+    except FutTimeout:
+        raise DriveHang(f'{what} quá {timeout} s') from None
+
+ex = ThreadPoolExecutor(THREADS)
 t0 = time.time()
-with tarfile.open(LOCAL, 'w', format=tarfile.GNU_FORMAT) as tar, ThreadPoolExecutor(16) as ex:
-    for i in range(0, len(rel), 2000):
-        chunk = rel[i:i + 2000]
-        for p, data in zip(chunk, ex.map(read, chunk)):
-            info = tarfile.TarInfo('img/' + p)
-            info.size, info.mtime = len(data), 0
-            tar.addfile(info, io.BytesIO(data))
-        done = i + len(chunk)
-        eta = (time.time() - t0) / done * (len(rel) - done) / 60
-        print(f'{done:>6}/{len(rel)}  {(time.time() - t0) / 60:5.1f} phút  (còn ~{eta:.0f} phút)', flush=True)
+try:
+    for i, s in enumerate(todo, 1):
+        ts, paths, loc = time.time(), by_subj[s], LOCAL / f'{s}.tar'
+        futs = [ex.submit(read, p) for p in paths]
+        with tarfile.open(loc, 'w', format=tarfile.GNU_FORMAT) as tar:
+            for p, f in zip(paths, futs):
+                data = wait(f, READ_TIMEOUT, f'Đọc {p}')
+                info = tarfile.TarInfo('img/' + p)
+                info.size, info.mtime = len(data), 0
+                tar.addfile(info, io.BytesIO(data))
+        with tarfile.open(loc) as tar:
+            names = sorted(m.name for m in tar if m.isfile())
+        assert names == ['img/' + p for p in paths], f'{s}: tar thiếu/thừa ảnh'
+        size, tmp = loc.stat().st_size, OUT / f'{s}.tar.partial'
+        wait(ex.submit(shutil.copy, loc, tmp), COPY_TIMEOUT, f'Chép {s}.tar lên Drive')
+        assert tmp.stat().st_size == size, f'{s}: bản chép lên Drive bị thiếu byte'
+        tmp.replace(OUT / f'{s}.tar')
+        (OUT / f'{s}.json').write_text(json.dumps({'n': len(paths), 'size': size}))
+        loc.unlink()
+        el = time.time() - t0
+        print(f'[{i:>2}/{len(todo)}] {s}: {len(paths)} ảnh, {size / 1e6:.0f} MB, {(time.time() - ts) / 60:.1f} phút'
+              f' | tổng {el / 60:.0f} phút, còn ~{el / i * (len(todo) - i) / 60:.0f} phút', flush=True)
+except DriveHang as e:
+    raise RuntimeError(f'DRIVE TREO ({e}). Các subject đã xong vẫn nằm trên Drive. '
+                       'Runtime → Restart session (không được thì Disconnect and delete runtime), '
+                       'rồi chạy lại cell A.') from None
+finally:
+    ex.shutdown(wait=False, cancel_futures=True)      # không chờ luồng đang treo
 
-# 2) Kiểm đủ ảnh
-with tarfile.open(LOCAL) as tar:
-    names = [m.name for m in tar if m.isfile()]
-assert len(names) == len(rel) and set(names) == {'img/' + p for p in rel}, 'tar thiếu/thừa ảnh'
-size = LOCAL.stat().st_size
-print(f'tar OK: {len(names)} ảnh, {size / 1e9:.2f} GB — đang chép lên Drive...', flush=True)
-
-# 3) Chép lên Drive (.partial → đổi tên khi xong), rồi chờ Drive đồng bộ hết
-shutil.copy(LOCAL, TMP)
-assert TMP.stat().st_size == size, 'Bản chép lên Drive bị thiếu byte'
-TMP.rename(FINAL)
+assert all(is_done(s) for s in by_subj), 'Còn subject chưa xong — chạy lại cell A'
+total = sum((OUT / f'{s}.tar').stat().st_size for s in by_subj)
+(OUT / 'DONE.json').write_text(json.dumps({'subjects': sorted(by_subj), 'n_images': len(rel), 'bytes': total}))
 print('Đang chờ Drive đồng bộ (có thể vài phút)...', flush=True)
 drive.flush_and_unmount()
-LOCAL.unlink()
-print(f'XONG: {FINAL} ({size / 1e9:.2f} GB) | tổng {(time.time() - t0) / 60:.0f} phút')
+print(f'XONG: {len(by_subj)} tar trong {OUT} ({total / 1e9:.2f} GB) | {(time.time() - t0) / 60:.0f} phút')
 ```
 
 ---
@@ -191,7 +228,7 @@ Bị ngắt phiên: chạy lại Setup rồi chạy lại cell này. Cell tự r
 ```python
 VARIANTS, FOLD, SEED = ['baseline', 'full'], 2, 0
 EPOCHS, BATCH, WORKERS = 20, 32, 4
-assert str(DATA).startswith('/content/'), 'Chưa có DISFA_img.tar: chạy cell A trước (đọc thẳng Drive hay lỗi)'
+assert str(DATA).startswith('/content/'), 'Chưa có DISFA_img/DONE.json: chạy cell A cho xong trước (đọc thẳng Drive hay lỗi)'
 
 for v in VARIANTS:
     out = RUNS / v / f'fold{FOLD}' / f'seed{SEED}'
@@ -268,7 +305,7 @@ run_logged([sys.executable, '-u', '-m', 'stage2_decoder.run_all', '--runs', RUNS
 import os, zipfile
 from google.colab import files
 ROOT, OUT = '/content/drive/MyDrive/Sym', '/content/Sym_source.zip'
-SKIP_DIRS = {'img', 'ActionUnit_Labels', 'source', '__pycache__', '.pytest_cache', 'tmp', 'checkpoints', '.ipynb_checkpoints'}
+SKIP_DIRS = {'img', 'DISFA_img', 'ActionUnit_Labels', 'source', '__pycache__', '.pytest_cache', 'tmp', 'checkpoints', '.ipynb_checkpoints'}
 SKIP_EXT  = {'.pt', '.pth', '.ckpt', '.zip', '.tar', '.gz', '.npz', '.npy', '.partial'}
 with zipfile.ZipFile(OUT, 'w', zipfile.ZIP_DEFLATED) as z:
     for dp, dns, fns in os.walk(ROOT):
