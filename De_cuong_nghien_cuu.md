@@ -292,6 +292,14 @@ Cộng các mức thấp được 62.78 và các mức cao được 66.5, nhưng
 > Đo lần đầu (13/11, trên Tầng 1 chưa sửa): **TRƯỢT**. R* thua C0 ở 2/3 variant, mọi CI của `R*−C0` đều chứa 0. So sánh sạch `R0 vs C0` cho +0.32 điểm trung bình, chưa tách được khỏi nhiễu.
 >
 > Phép đo này đặt trên một detector đang quá khớp nặng, nên phải **đo lại sau khi sửa Tầng 1** rồi mới kết luận.
+>
+> Chạy thử 21/11 (cell E: `stage2_decoder`, 6 run `runs_retry1` × `splits` cũ, **chỉ val**). Mục đích là kiểm module, nên số liệu không dùng để báo cáo, vì λ và ngưỡng được chọn trên chính val này.
+> - Module chạy hết 6 run trong khoảng 30 giây, C0 khớp với `val_metrics.json`.
+> - `R0 − C0` trên val chỉ từ +0.00 đến +0.87 điểm (trung bình +0.44). Đây đã là cận trên. Có một run λ chọn ra bằng 0.
+> - `C1 − C0` lớn hơn nhiều, từ +1.5 đến +10.6. Ở fold 3, ngưỡng AU1/AU2 chạm biên lưới 0.95, cho thấy detector cũ lệch hiệu chỉnh giữa các subject.
+> - Dự đoán C0 vi phạm luật dữ liệu ở 2–7% số frame, nên decoder chỉ có thể sửa được phần nhỏ đó.
+> - Luật thay đổi nhiều giữa các fold: lần lượt 6, 2 và 4 luật, chỉ `AU6 → AU25` có mặt ở cả 3 fold. Trong 5 luật FACS viết tay, mỗi fold nhận tối đa 1 luật, và luật được nhận khác nhau giữa các fold. `¬AU1 ∨ ¬AU9` và `¬AU2 ∨ ¬AU9` bị loại ở cả 3 fold.
+> - `R0` hơn `R_FACS` ở 5/6 run, nhưng chênh lệch đều dưới 1 điểm.
 
 **Contrastive được coi là có đóng góp** khi thoả cả hai bước:
 1. Chọn **một** cấu hình contrastive trên inner val **trước khi mở test**: `full` hoặc cấu hình sweep tốt nhất trên val.
