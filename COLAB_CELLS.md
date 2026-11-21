@@ -22,7 +22,7 @@ if not os.path.isdir('/content/drive/MyDrive'):
     drive.mount('/content/drive')
 
 REPO_URL = 'https://github.com/Letri6102/Thesis_Sym.git'
-BRANCH   = 'main'
+BRANCH   = 'main'                      # 'stage1-ema-valchecks': chỉ ở phiên chạy cell B2 khi nhánh chưa merge
 REPO     = Path('/content/Thesis_Sym')
 CODE     = REPO / 'Contrastive_V1'
 SYM      = Path('/content/drive/MyDrive/Sym')
@@ -275,6 +275,80 @@ for v in ['baseline', 'full']:
     print('   F1/AU mới:', ' '.join(f'AU{a}:{x:.2f}' for a, x in zip(AU, bn['val']['per_au_f1'])))
     print('   F1/AU cũ :', ' '.join(f'AU{a}:{x:.2f}' for a, x in zip(AU, bo['val']['per_au_f1'])))
     print('   val F1 theo epoch:', ' '.join(f"{e['val']['macro_f1']:.3f}" for e in new))
+```
+
+---
+
+## B2. Thử EMA + val dày + LR backbone — fold 2, seed 0 → `runs_aug2` (cần GPU, chạy sau Setup)
+
+So với pilot (cell B), cell này giữ nguyên augmentation, split, số epoch, batch và variant. Chỉ thêm 3 thay đổi:
+- `--ema-decay 0.999`: đánh giá, chọn và lưu trọng số EMA;
+- `--val-per-epoch 4`: đánh giá val 4 lần mỗi epoch, chọn checkpoint trên mọi lần đánh giá;
+- `--backbone-lr-mult 0.1`: backbone dùng lr 1e-5, head giữ 1e-4.
+
+Ba thay đổi này đi chung một gói vệ sinh huấn luyện, không phải đóng góp của luận văn, nên thử gộp một lần.
+
+**Code nằm ở nhánh `stage1-ema-valchecks` cho tới khi pilot xong.** Nhánh này sửa các file bị hash; merge vào `main` lúc pilot đang chạy thì pilot sẽ không resume được nữa.
+- Muốn chạy song song với pilot: mở một phiên GPU **khác**, trong Setup đặt `BRANCH = 'stage1-ema-valchecks'`. Phiên pilot vẫn để `BRANCH = 'main'`.
+- Sau khi pilot xong và nhánh đã merge: dùng `BRANCH = 'main'` như thường.
+
+`EPOCHS`, `BATCH`, `WORKERS`, `EMA`, `VAL_PER_EPOCH`, `BB_LR` nằm trong config của run, phải giữ nguyên qua mọi lần resume.
+
+```python
+VARIANTS, FOLD, SEED = ['baseline', 'full'], 2, 0
+EPOCHS, BATCH, WORKERS = 20, 32, 4
+EMA, VAL_PER_EPOCH, BB_LR = 0.999, 4, 0.1
+RUNS2 = SYM / 'runs_aug2'                  # aug + EMA + val dày + LR backbone; tách khỏi pilot runs_aug1
+assert str(DATA).startswith('/content/'), 'Chưa có DISFA_img/DONE.json: chạy cell A cho xong trước'
+assert '--ema-decay' in (CODE / 'train_contrastive.py').read_text(), \
+    "Code chưa có EMA: trong Setup đặt BRANCH = 'stage1-ema-valchecks' (hoặc chờ nhánh được merge vào main)"
+
+for v in VARIANTS:
+    out = RUNS2 / v / f'fold{FOLD}' / f'seed{SEED}'
+    hist = out / 'history.json'
+    if hist.exists() and len(json.loads(hist.read_text())) >= EPOCHS:
+        print(f'{v}: đã xong {EPOCHS} epoch, bỏ qua'); continue
+    cmd = [sys.executable, '-u', 'train_contrastive.py', 'train', '--variant', v, '--seed', SEED,
+           '--arc', 'resnet50', '--data-root', DATA, '--manifest', SPLITS / f'fold{FOLD}.json',
+           '--output', out, '--epochs', EPOCHS, '--batch-size', BATCH, '--workers', WORKERS,
+           '--ema-decay', EMA, '--val-per-epoch', VAL_PER_EPOCH, '--backbone-lr-mult', BB_LR]
+    if (out / 'last.pt').exists():
+        cmd += ['--resume', out / 'last.pt']
+    run_logged(cmd, f'train_aug2_{v}_fold{FOLD}_seed{SEED}')
+```
+
+---
+
+## C2. So `runs_aug2` với pilot `runs_aug1` và run cũ (fold 2, seed 0)
+
+`runs_aug2` được chọn checkpoint trên 80 lần đánh giá, còn pilot chỉ có 20. Chọn max trên nhiều điểm hơn thì số val tự cao lên một chút. Vì vậy cell in **hai** con số cho `runs_aug2`:
+- tốt nhất trên mọi lần đánh giá: đây là checkpoint thật sự được dùng;
+- tốt nhất chỉ trên các lần đánh giá cuối epoch: dùng để so ngang hàng với pilot.
+
+Quy tắc giữ gói thay đổi:
+- Giữ nếu con số "cuối epoch" của `runs_aug2` **không thấp hơn** pilot.
+- Chỉ gọi là "tốt hơn" khi hơn rõ, cỡ 0.5 điểm trở lên. Một fold và một seed không đủ để phân biệt mức chênh nhỏ hơn.
+
+```python
+import json
+AU = [1, 2, 4, 6, 9, 12, 25, 26]
+def points(h, end_only=False):
+    return [(c['progress'], c['val']) for r in h
+            for c in ([dict(progress=r['epoch'], val=r['val'])] if end_only or 'val_checks' not in r else r['val_checks'])]
+for v in ['baseline', 'full']:
+    print(f'== {v} ==')
+    for name in ('runs_retry1', 'runs_aug1', 'runs_aug2'):
+        p = SYM / name / v / 'fold2' / 'seed0' / 'history.json'
+        if not p.exists():
+            print(f'  {name:<12} chưa có'); continue
+        h = json.loads(p.read_text())
+        pa, va = max(points(h), key=lambda x: x[1]['macro_f1'])
+        pe, ve = max(points(h, end_only=True), key=lambda x: x[1]['macro_f1'])
+        print(f"  {name:<12} {len(h):>2} epoch | tốt nhất {va['macro_f1']:.3f} @ {pa:g}"
+              f" | chỉ cuối epoch {ve['macro_f1']:.3f} @ {pe:g} | wa cuối {h[-1]['train']['wa']:.4f}")
+        print('               F1/AU: ' + ' '.join(f'AU{a}:{x:.2f}' for a, x in zip(AU, va['per_au_f1'])))
+        if name == 'runs_aug2':
+            print('               val theo lần đánh giá: ' + ' '.join(f"{x['macro_f1']:.3f}" for _, x in points(h)))
 ```
 
 ---

@@ -99,7 +99,7 @@ Quy tắc cho mọi cell:
 - Tầng 2: nhánh chính là **R0** (luật dữ liệu, bias 0, λ chọn trên val); so sánh chính là `R0 − C0`. Bỏ R\* (20/11). C1/R1 (ngưỡng chỉnh trên 3 subject val) chỉ là nhánh phụ. `R_FACS` (5 luật viết tay) trả lời Q2a. Giai đoạn thiết kế chạy `--val-only`.
 - Khi theo dõi loss, đọc các cột thô `global_con`/`node_con`/`cross_con` trong `history.json`. Không đọc `total`, vì cột này có nhân hệ số ramp.
 
-## 7. Việc đang mở (cập nhật 20/11/2026)
+## 7. Việc đang mở (cập nhật 21/11/2026)
 
 `splits_v2` đã sinh xong ngày 20/11.
 
@@ -107,4 +107,8 @@ Quy tắc cho mọi cell:
 2. Pilot `baseline` + `full`, fold 2, `runs_aug1`: cell B, kiểm bằng cell C. Phiên đầu (21/11) chạy trên torch 2.14.1+cu130, torchvision 0.29.1, GPU L4, 12 CPU; Setup giải nén ảnh mất 5,6 phút. Nếu resume bị từ chối vì torch đổi phiên bản, cài lại đúng bản này trước khi resume.
 3. Sau pilot: chạy Tầng 2 chỉ trên val (cell D) cho fold 2. Phần code Tầng 2 đã thống nhất xong ngày 20/11.
 4. ~~Cell E~~ **XONG 21/11**: `stage2_decoder` chạy đúng trên 6 run cũ, chỉ val, mất khoảng 30 giây. Kết quả tóm tắt nằm ở đề cương §6 và không dùng để báo cáo. Trên val, `R0 − C0` chỉ từ +0.0 đến +0.9, trong khi C1 − C0 từ +1.5 đến +10.6.
-5. Tuỳ chọn, cho Q2b: Stage 2/3 của SymGraphAU trong `MultiviewSymAU-master/` (đồ thị CNF + GCN) còn lỗi sigmoid hai lần và mất dấu phủ định. Đây không phải phương pháp chính; nếu không kịp thì Q2b trả lời bằng lập luận (đề cương §1).
+5. **Gói vệ sinh Tầng 1** gồm EMA, đánh giá val 4 lần/epoch và LR backbone 0.1× (cờ `--ema-decay`, `--val-per-epoch`, `--backbone-lr-mult`, mặc định tắt).
+   - Code và test nằm ở nhánh **`stage1-ema-valchecks`**. Nhánh này sửa file bị hash (`train_contrastive.py`, `EXPERIMENT_PROTOCOL.md`), nên **chỉ merge vào `main` sau khi pilot `runs_aug1` xong**.
+   - Chạy thử bằng cell B2 (ghi vào `runs_aug2`), so sánh bằng cell C2. Được chạy song song với pilot ở một phiên khác, với Setup đặt `BRANCH = 'stage1-ema-valchecks'`.
+   - Sau khi merge thì **không sửa file bị hash nào nữa** cho tới khi `runs_aug2` xong, vì merge fast-forward giữ nguyên byte của code.
+6. Tuỳ chọn, cho Q2b: Stage 2/3 của SymGraphAU trong `MultiviewSymAU-master/` (đồ thị CNF + GCN) còn lỗi sigmoid hai lần và mất dấu phủ định. Đây không phải phương pháp chính; nếu không kịp thì Q2b trả lời bằng lập luận (đề cương §1).

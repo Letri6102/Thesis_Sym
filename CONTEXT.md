@@ -137,8 +137,8 @@ Ràng buộc chung:
 | # | Tầng | Thay đổi | Lý do | Chi phí | Trạng thái |
 |---|---|---|---|---|---|
 | 1 | 1 | Augmentation mạnh | run cũ quá khớp (`wa` → 0, val đạt đỉnh ở epoch 1–2) | đã có | **pilot đang chạy** |
-| 2 | 1 | Đánh giá val mỗi ¼ epoch + EMA trọng số | đỉnh val rơi vào epoch 1, nên checkpoint tốt có thể nằm giữa epoch; EMA làm mượt | sửa code nhỏ | chờ pilot |
-| 3 | 1 | LR backbone nhỏ hơn head (1e-5 / 1e-4) | fine-tune trên chỉ 15 subject dễ quá khớp | sửa code nhỏ | chờ pilot |
+| 2 | 1 | Đánh giá val mỗi ¼ epoch + EMA trọng số | đỉnh val rơi vào epoch 1, nên checkpoint tốt có thể nằm giữa epoch; EMA làm mượt | sửa code nhỏ | **đã code 21/11** (nhánh `stage1-ema-valchecks`), chạy thử bằng cell B2 → `runs_aug2` |
+| 3 | 1 | LR backbone nhỏ hơn head (1e-5 / 1e-4) | fine-tune trên chỉ 15 subject dễ quá khớp. Lưu ý: head + projection có 19.1M tham số, gần bằng backbone ResNet-50 (23.5M), và vẫn giữ lr 1e-4 | sửa code nhỏ | **đã code 21/11**, đi chung gói với mục 2 |
 | 4 | 1 | Contrastive **khác subject**: cặp dương phải đến từ hai subject khác nhau; thêm queue cho node loss | lỗi lớn nhất là lệch giữa subject (ngưỡng C1 lệch xa 0.5, chênh giữa fold ≥ 30 điểm); AU2/AU9 ít mẫu dương trong mỗi batch | variant mới | đóng góp chính, chờ pilot |
 | 5 | 1 | Swin-B | backbone tốt nhất của paper | gấp khoảng 2 lần GPU | chỉ so với 64.5 |
 | 6 | 2 | Ngưỡng C1 có giới hạn (lưới hẹp, hoặc co về 0.5) | C1 thắng lớn trên val nhưng dễ quá khớp 3 subject | CPU | đo lại sau pilot |
