@@ -97,7 +97,7 @@ Quy tắc cho mọi cell:
 `splits_v2` đã sinh xong ngày 20/11.
 
 1. ~~Đóng gói ảnh~~ **XONG 21/11**: 27 tar trong `MyDrive/Sym/DISFA_img/` cùng `DONE.json`, tổng 8,65 GB, chạy hết 100 phút. Không chạy lại cell A.
-2. Pilot `baseline` + `full`, fold 2, `runs_aug1`: cell B, kiểm bằng cell C.
+2. Pilot `baseline` + `full`, fold 2, `runs_aug1`: cell B, kiểm bằng cell C. Phiên đầu (21/11) chạy trên torch 2.14.1+cu130, torchvision 0.29.1, GPU L4, 12 CPU; Setup giải nén ảnh mất 5,6 phút. Nếu resume bị từ chối vì torch đổi phiên bản, cài lại đúng bản này trước khi resume.
 3. Sau pilot: chạy Tầng 2 chỉ trên val (cell D) cho fold 2. Phần code Tầng 2 đã thống nhất xong ngày 20/11.
 4. Song song với pilot: cell E chạy thử `stage2_decoder` trên 6 run cũ (baseline/full × 3 fold), chỉ val, trên phiên CPU với Setup `IMAGES = False`. Mục đích là kiểm module chạy được trên dữ liệu thật; số liệu thu được không dùng để báo cáo.
 5. Tuỳ chọn, cho Q2b: Stage 2/3 của SymGraphAU trong `MultiviewSymAU-master/` (đồ thị CNF + GCN) còn lỗi sigmoid hai lần và mất dấu phủ định. Đây không phải phương pháp chính; nếu không kịp thì Q2b trả lời bằng lập luận (đề cương §1).
