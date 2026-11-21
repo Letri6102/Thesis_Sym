@@ -95,6 +95,6 @@ Quy tắc cho mọi cell:
 
 `splits_v2` đã sinh xong ngày 20/11.
 
-1. Đóng gói `DISFA/img` thành 27 tar theo subject trong `MyDrive/Sym/DISFA_img/`: cell A trong `COLAB_CELLS.md` (bản 21/11, chạy lại được, subject xong thì bỏ qua). Xong khi có `DISFA_img/DONE.json`. Bước này chặn mọi run train.
+1. ~~Đóng gói ảnh~~ **XONG 21/11**: 27 tar trong `MyDrive/Sym/DISFA_img/` cùng `DONE.json`, tổng 8,65 GB, chạy hết 100 phút. Không chạy lại cell A.
 2. Pilot `baseline` + `full`, fold 2, `runs_aug1`: cell B, kiểm bằng cell C.
 3. Sau pilot: chạy Tầng 2 chỉ trên val (cell D) cho fold 2. Phần code Tầng 2 đã thống nhất xong ngày 20/11.

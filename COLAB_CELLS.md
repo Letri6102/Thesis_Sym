@@ -54,8 +54,10 @@ if (SHARDS / 'DONE.json').exists():
     if not (DATA / '.img_ok').exists():        # chưa giải nén, hoặc lần trước giải nén dở
         t0, meta = time.time(), json.loads((SHARDS / 'DONE.json').read_text())
         DATA.mkdir(parents=True, exist_ok=True)
-        for s in meta['subjects']:
+        print(f'Giải nén {len(meta["subjects"])} tar ({meta["bytes"] / 1e9:.1f} GB) về /content:', flush=True)
+        for i, s in enumerate(meta['subjects'], 1):
             subprocess.run(['tar', '-xf', str(SHARDS / f'{s}.tar'), '-C', str(DATA)], check=True, timeout=1800)
+            print(f'  {i:>2}/{len(meta["subjects"])} {s}  {(time.time() - t0) / 60:.1f} phút', flush=True)
         n = sum(len(f) for _, _, f in os.walk(DATA / 'img'))
         assert n == meta['n_images'], f'Giải nén được {n} ảnh, cần {meta["n_images"]}'
         shutil.copytree(SYM / 'DISFA' / 'list', DATA / 'list', dirs_exist_ok=True)
@@ -73,7 +75,8 @@ w_dst = CODE / 'checkpoints' / 'resnet50-19c8e357.pth'
 if w_src.exists() and not w_dst.exists():
     shutil.copy(w_src, w_dst)
 import torch, torchvision
-print('torch', torch.__version__, '| torchvision', torchvision.__version__, '| cuda', torch.cuda.is_available())
+print('torch', torch.__version__, '| torchvision', torchvision.__version__, '| CPU', os.cpu_count(),
+      '| GPU', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'KHÔNG CÓ')
 
 import re
 def run_logged(cmd, name):
