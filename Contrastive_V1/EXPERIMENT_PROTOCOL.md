@@ -81,6 +81,13 @@ lén sửa loss chỉ ở nhánh full. Runner mới không thay đổi objective
 4. Checkpoint chọn bằng macro-F1 inner-validation, ngưỡng AU cố định 0.5.
    Tie: giữ epoch sớm hơn. Không dùng outer test để chọn epoch, loss, weight,
    seed, augmentation, threshold hoặc phương án tốt nhất.
+   Tuỳ chọn (21/11, mặc định tắt = hành vi cũ):
+   - `--val-per-epoch N` đánh giá inner val N lần mỗi epoch. Checkpoint được chọn
+     trên **mọi** lần đánh giá, hoà thì giữ lần sớm hơn. `history.json → val_checks`
+     ghi `progress` (số epoch đã train, ví dụ 1.25), `best.pt` cũng ghi `progress`.
+   - `--ema-decay d` đánh giá, chọn và lưu trọng số EMA. EMA có warm-up
+     `(1+t)/(10+t)`. `last.pt` giữ cả trọng số train để resume.
+   - `--backbone-lr-mult r`: lr của backbone = r × lr, head giữ lr.
 5. Outer test được gọi bằng lệnh evaluate riêng sau khi chốt thiết kế. Lưu
    probabilities + labels + subject/path để có thể kiểm tra và tổng hợp lại.
    Không đánh giá test mỗi epoch. Smoke test dùng dữ liệu tổng hợp hoặc inner val.
@@ -90,8 +97,9 @@ lén sửa loss chỉ ở nhánh full. Runner mới không thay đổi objective
 ## 4. Ngân sách và fairness
 
 ResNet50 ImageNet V1, 224px; AdamW lr=1e-4, wd=5e-4, betas=.9/.999;
-cosine schedule 20 epochs, batch=32, temperature=.1. Cùng augmentation như
-code cũ: resize 256, center crop 224, color jitter nhẹ ở train. Không thêm view
+cosine schedule 20 epochs, batch=32, temperature=.1. Augmentation ở train:
+`strong_train_aug` trong `experiment_data.py` (từ 13/11; run trong `runs_retry1`
+chưa dùng). Test: resize 256, center crop 224. Không thêm view
 thứ hai trong V1. Không gradient accumulation (không làm tăng tập contrastive keys).
 Ba training seeds `0,1,2`, ba folds `1,2,3`: mỗi variant có 9 runs.
 Baseline và full là tối thiểu; current là đối chứng thứ hai cần chạy để trả lời

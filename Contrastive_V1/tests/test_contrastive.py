@@ -152,6 +152,7 @@ class TinyStage(nn.Module):
     """Fast integration fixture; actual production heads get a separate forward test."""
     def __init__(self, **kwargs):
         super().__init__()
+        self.backbone = nn.Linear(3, 3)
         self.fc = nn.Linear(3, 15 * 8)
         self.au_classifier = nn.Linear(8, 1)
         self.expr_classifier = nn.Linear(8, 1)
@@ -160,7 +161,7 @@ class TinyStage(nn.Module):
         self.proj_expr = nn.Linear(8, 128)
 
     def forward(self, x, return_proj=False):
-        f = self.fc(x.mean((-1, -2))).reshape(-1, 15, 8)
+        f = self.fc(self.backbone(x.mean((-1, -2)))).reshape(-1, 15, 8)
         a, e = f[:, :8], f[:, 8:]
         result = (a, e, self.au_classifier(a).squeeze(-1).sigmoid(), self.expr_classifier(e).squeeze(-1).sigmoid())
         if return_proj:
@@ -169,11 +170,14 @@ class TinyStage(nn.Module):
         return result
 
 
-def args_for(root, manifest, output, variant):
-    return argparse.Namespace(data_root=str(root), manifest=str(manifest), output=str(output),
-                              variant=variant, epochs=2, batch_size=4, temperature=.1, seed=0,
-                              arc='resnet18', lr=1e-4, weight_decay=5e-4, device='cpu', workers=0,
-                              no_pretrained=True, resume='', stop_after=None)
+def args_for(root, manifest, output, variant, **extra):
+    a = argparse.Namespace(data_root=str(root), manifest=str(manifest), output=str(output),
+                           variant=variant, epochs=2, batch_size=4, temperature=.1, seed=0,
+                           arc='resnet18', lr=1e-4, weight_decay=5e-4, device='cpu', workers=0,
+                           no_pretrained=True, resume='', stop_after=None,
+                           ema_decay=0., val_per_epoch=1, backbone_lr_mult=1.)
+    vars(a).update(extra)
+    return a
 
 
 @pytest.mark.parametrize('variant', ['baseline', 'full', 'current'])
@@ -199,6 +203,75 @@ def test_train_resume_eval_reproduces_uninterrupted(tmp_path, variant):
     assert ca['initial_detector_hash'] == cb['initial_detector_hash']
     assert ca['best_val_f1'] == cb['best_val_f1']
     assert (tmp_path / 'eval' / 'test_predictions.npz').is_file()
+    # Mặc định (không EMA, 1 lần val/epoch): history giữ bố cục cũ.
+    assert 'val_checks' not in json.loads((Path(resumed.output) / 'history.json').read_text())[0]
+    assert 'train_state_dict' not in ca
+
+
+def test_check_steps_and_best_point_ties():
+    from train_contrastive import check_steps, best_point, selection_points
+    from stage2_decoder.check_stage1 import best_point as best_point_s2
+    assert check_steps(10, 1) == []
+    assert check_steps(10, 4) == [2, 4, 7]
+    assert check_steps(2, 4) == [0]                      # không trùng lần đánh giá cuối epoch
+    v = lambda f: dict(macro_f1=f)
+    old = [dict(epoch=1, val=v(.5)), dict(epoch=2, val=v(.7)), dict(epoch=3, val=v(.7))]
+    assert best_point(old)[0] == 2                       # bố cục cũ; hoà → epoch sớm hơn
+    new = [dict(epoch=1, val=v(.6), val_checks=[dict(progress=.5, val=v(.65)), dict(progress=1, val=v(.6))]),
+           dict(epoch=2, val=v(.65), val_checks=[dict(progress=1.5, val=v(.64)), dict(progress=2, val=v(.65))])]
+    assert [p for p, _ in selection_points(new)] == [.5, 1, 1.5, 2]
+    assert best_point(new)[0] == best_point_s2(new)[0] == .5
+
+
+def test_model_ema_formula_and_int_buffers():
+    from train_contrastive import ModelEMA
+    torch.manual_seed(0)
+    net = nn.Sequential(nn.Linear(2, 2), nn.BatchNorm1d(2))
+    ema = ModelEMA(net, .9)
+    w0 = net[0].weight.detach().clone()
+    with torch.no_grad():
+        net[0].weight.add_(1.)
+    net.train()
+    net(torch.randn(4, 2))                               # num_batches_tracked: 0 → 1
+    ema.update(net)
+    d = 2 / 11                                           # warm-up (1 + 1) / (10 + 1) < 0.9
+    torch.testing.assert_close(ema.module[0].weight, d * w0 + (1 - d) * net[0].weight)
+    assert ema.module[1].num_batches_tracked.item() == net[1].num_batches_tracked.item() == 1
+    assert not any(p.requires_grad for p in ema.module.parameters())
+
+
+def test_train_ema_valchecks_lrmult_resume_and_eval(tmp_path):
+    from train_contrastive import best_point
+    root, manifest = synthetic_data(tmp_path)
+    opts = dict(batch_size=2, ema_decay=.9, val_per_epoch=3, backbone_lr_mult=.1)   # fit 8 frame → 4 step/epoch
+    continuous = args_for(root, manifest, tmp_path / 'continuous', 'full', **opts)
+    resumed = args_for(root, manifest, tmp_path / 'resumed', 'full', **opts)
+    with patch('train_contrastive.MEFARGStage1', TinyStage):
+        train(continuous)
+        resumed.stop_after = 1
+        train(resumed)
+        resumed.resume = str(Path(resumed.output) / 'last.pt')
+        resumed.stop_after = None
+        train(resumed)
+        evaluate(argparse.Namespace(data_root=str(root), manifest=str(manifest),
+                                    checkpoint=str(Path(resumed.output) / 'best.pt'), output=str(tmp_path / 'eval'),
+                                    batch_size=4, workers=0, device='cpu', split='test'))
+    ca = torch.load(Path(continuous.output) / 'last.pt', weights_only=False)
+    cb = torch.load(Path(resumed.output) / 'last.pt', weights_only=False)
+    for part in ('state_dict', 'train_state_dict'):
+        for key in ca[part]:
+            torch.testing.assert_close(ca[part][key], cb[part][key], rtol=0, atol=0)
+    assert ca['ema_updates'] == cb['ema_updates'] == 8
+    assert any(not torch.equal(ca['state_dict'][k], ca['train_state_dict'][k]) for k in ca['state_dict'])
+    hist = json.loads((Path(resumed.output) / 'history.json').read_text())
+    assert [[c['progress'] for c in r['val_checks']] for r in hist] == [[.5, .75, 1], [1.5, 1.75, 2]]
+    assert all(r['val'] == r['val_checks'][-1]['val'] for r in hist)
+    best = torch.load(Path(resumed.output) / 'best.pt', weights_only=False)
+    assert 'optimizer' not in best and best['progress'] == best_point(hist)[0]
+    g = {grp['lr_mult']: grp['lr'] for grp in ca['optimizer']['param_groups']}
+    assert set(g) == {.1, 1.} and g[.1] == pytest.approx(.1 * g[1.])
+    m = json.loads((tmp_path / 'eval' / 'test_metrics.json').read_text())
+    assert m['selected_progress'] == best['progress']
 
 
 def test_real_model_forward_backward_and_interface():

@@ -1,8 +1,10 @@
 """Controlled Stage-1 ablations. See EXPERIMENT_PROTOCOL.md before running."""
 import argparse
+import copy
 import hashlib
 import importlib.metadata
 import json
+import math
 import os
 import random
 import shutil
@@ -91,6 +93,45 @@ def predict(model, data, batch, workers, device):
     return metrics(y, p), y, p
 
 
+class ModelEMA:
+    """Trung bình mũ của trọng số (kể cả BN running stats); tensor không phải số thực thì chép thẳng.
+    decay khởi động theo (1 + t) / (10 + t) để giai đoạn đầu không bị kéo về trọng số khởi tạo."""
+    def __init__(self, model, decay):
+        self.module = copy.deepcopy(model).eval()
+        for p in self.module.parameters():
+            p.requires_grad_(False)
+        self.decay, self.updates = decay, 0
+
+    @torch.no_grad()
+    def update(self, model):
+        self.updates += 1
+        d = min(self.decay, (1 + self.updates) / (10 + self.updates))
+        current = model.state_dict()
+        for name, value in self.module.state_dict().items():
+            if value.dtype.is_floating_point:
+                value.mul_(d).add_(current[name].detach(), alpha=1 - d)
+            else:
+                value.copy_(current[name])
+
+
+def check_steps(steps_per_epoch, checks_per_epoch):
+    """Chỉ số step (0-based) có đánh giá val giữa epoch; lần cuối epoch đánh giá riêng."""
+    marks = {math.ceil(k * steps_per_epoch / checks_per_epoch) - 1 for k in range(1, checks_per_epoch)}
+    return sorted(s for s in marks if 0 <= s < steps_per_epoch - 1)
+
+
+def selection_points(history):
+    """Mọi lần đánh giá val theo thứ tự thời gian: (progress, metrics).
+    progress = số epoch đã train (cuối epoch e là e). Run chỉ đánh giá cuối epoch: mỗi epoch một điểm."""
+    return [(c['progress'], c['val']) for r in history
+            for c in (r.get('val_checks') or [dict(progress=r['epoch'], val=r['val'])])]
+
+
+def best_point(history):
+    """Điểm có macro-F1 val cao nhất; hoà thì lấy điểm sớm hơn (max giữ phần tử đầu)."""
+    return max(selection_points(history), key=lambda pv: pv[1]['macro_f1'])
+
+
 def restore_detector(model, checkpoint):
     state = {k.removeprefix('module.'): v for k, v in checkpoint['state_dict'].items()}
     missing, unexpected = model.load_state_dict(state, strict=False)
@@ -104,6 +145,8 @@ def train(args):
         raise ValueError('Positive epochs/lr/temperature, batch-size>=2 and nonnegative wd/workers required')
     if args.stop_after is not None and args.stop_after <= 0:
         raise ValueError('stop-after must be positive')
+    if not 0 <= args.ema_decay < 1 or args.val_per_epoch < 1 or args.backbone_lr_mult <= 0:
+        raise ValueError('ema-decay in [0,1), val-per-epoch >= 1, backbone-lr-mult > 0 required')
     m = load_manifest(args.manifest, args.data_root)
     device = torch.device(args.device)
     variant = VARIANTS[args.variant]
@@ -113,6 +156,8 @@ def train(args):
                   gamma=.05, proj_dim=128, precision='float32', threshold=.5,
                   expr_loss='legacy_bce', variant_settings=variant,
                   pretrained=not args.no_pretrained,
+                  ema_decay=args.ema_decay, val_per_epoch=args.val_per_epoch,
+                  backbone_lr_mult=args.backbone_lr_mult,
                   environment_versions={k: importlib.metadata.version(k) for k in ('torch', 'torchvision', 'numpy', 'timm', 'pillow')},
                   manifest_hash=digest(args.manifest), source_hashes=source_files())
     seed_all(args.seed)
@@ -123,8 +168,18 @@ def train(args):
                         pretrained=not args.no_pretrained and not args.resume)
     init_hash = state_digest(model)
     model.to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay,
-                                  betas=(.9, .999))
+    # Hai nhóm tham số: backbone (lr × backbone_lr_mult) và phần còn lại (lr). Mult = 1 cho cùng kết quả
+    # như một nhóm duy nhất: AdamW cập nhật từng tham số độc lập.
+    backbone = getattr(model, 'backbone', None)
+    bb_params = list(backbone.parameters()) if backbone is not None else []
+    if args.backbone_lr_mult != 1 and not bb_params:
+        raise ValueError('backbone-lr-mult needs a model with a parameterised .backbone')
+    bb_ids = {id(p) for p in bb_params}
+    groups = [dict(params=bb_params, lr_mult=args.backbone_lr_mult),
+              dict(params=[p for p in model.parameters() if id(p) not in bb_ids], lr_mult=1.)]
+    optimizer = torch.optim.AdamW([g for g in groups if g['params']], lr=args.lr,
+                                  weight_decay=args.weight_decay, betas=(.9, .999))
+    ema = ModelEMA(model, args.ema_decay) if args.ema_decay > 0 else None
     fit = ExperimentFrames(args.data_root, m, 'fit')
     val = ExperimentFrames(args.data_root, m, 'val')
     matrix = torch.tensor(np.load(MATRIX_PATH), device=device, dtype=torch.float32)
@@ -143,7 +198,11 @@ def train(args):
             raise ValueError('Resume config/source/split differs; use the original run configuration')
         if Path(args.resume).resolve().parent != output.resolve():
             raise ValueError('Resume into the original output directory (preserve best.pt)')
-        model.load_state_dict(ckpt['state_dict'], strict=True)
+        # Có EMA: 'state_dict' là trọng số EMA (dùng để đánh giá), 'train_state_dict' là trọng số đang train.
+        model.load_state_dict(ckpt.get('train_state_dict', ckpt['state_dict']), strict=True)
+        if ema is not None:
+            ema.module.load_state_dict(ckpt['state_dict'], strict=True)
+            ema.updates = ckpt['ema_updates']
         optimizer.load_state_dict(ckpt['optimizer'])
         start, best, history = ckpt['epoch'] + 1, ckpt['best_val_f1'], ckpt['history']
         init_hash = ckpt['initial_detector_hash']
@@ -177,6 +236,35 @@ def train(args):
         return
     if device.type == 'cuda':
         torch.cuda.reset_peak_memory_stats(device)
+    evaluated = ema.module if ema is not None else model
+
+    def make_checkpoint(epoch, progress, full):
+        # best.pt chỉ cần trọng số để evaluate; last.pt thêm optimizer/RNG/EMA để resume.
+        ck = dict(state_dict=evaluated.state_dict(), epoch=epoch, progress=progress, config=config,
+                  initial_detector_hash=init_hash, manifest=m, history=history, best_val_f1=best)
+        if full:
+            ck.update(optimizer=optimizer.state_dict(),
+                      queue={n: t.detach().cpu().clone() for n, t in queue.named_buffers()} if queue else None,
+                      rng_python=random.getstate(), rng_numpy=np.random.get_state(),
+                      rng_torch=torch.get_rng_state(),
+                      rng_cuda=torch.cuda.get_rng_state_all() if device.type == 'cuda' else None)
+            if ema is not None:
+                ck.update(train_state_dict=model.state_dict(), ema_updates=ema.updates)
+        return ck
+
+    def val_check(epoch, step, progress):
+        nonlocal best
+        validation, _, _ = predict(evaluated, val, args.batch_size, args.workers, device)
+        model.train()                                    # predict() chuyển sang eval khi không có EMA
+        improved = validation['macro_f1'] > best         # hoà → giữ lần đánh giá sớm hơn
+        best = max(best, validation['macro_f1'])
+        if improved:
+            atomic_save(make_checkpoint(epoch, progress, full=False), output / 'best.pt')
+        if args.val_per_epoch > 1:
+            print(f'val_check {progress:g} macro_f1={validation["macro_f1"]:.4f} best={best:.4f}'
+                  + (' *' if improved else ''), flush=True)
+        return dict(progress=progress, step=step, val=validation)
+
     for epoch in range(start, args.epochs):
         tick = time.perf_counter()
         # Independent epoch RNG makes augmentation order comparable even with queue/heads.
@@ -186,10 +274,11 @@ def train(args):
         sums = dict(total=0., wa=0., we=0., global_con=0., node_con=0., cross_con=0.)
         eligible = np.zeros(8)
         seen = 0
+        mid_checks, checks = set(check_steps(len(data), args.val_per_epoch)), []
         for step, (images, labels) in enumerate(data):
             lr = args.lr * (1 + np.cos(np.pi * (epoch + step / len(data)) / args.epochs)) / 2
             for group in optimizer.param_groups:
-                group['lr'] = lr
+                group['lr'] = lr * group['lr_mult']
             images, labels = images.to(device), labels.to(device)
             # BatchNorm in global projection requires >1 image. Keep singleton image
             # for detection training; skip all contrastive paths on that last batch.
@@ -218,6 +307,8 @@ def train(args):
                 raise FloatingPointError(f'Nonfinite loss at epoch={epoch}, step={step}')
             loss.backward()
             optimizer.step()
+            if ema is not None:
+                ema.update(model)
             if queue is not None and use_con:
                 queue.enqueue(zg, labels)
             bs = len(labels)
@@ -226,24 +317,17 @@ def train(args):
                 sums[name] += value.detach().item() * bs
             if step % 100 == 0:
                 print(f'epoch {epoch+1}/{args.epochs} step {step}/{len(data)} loss={loss.item():.5f}', flush=True)
-        validation, _, _ = predict(model, val, args.batch_size, args.workers, device)
+            if step in mid_checks:
+                checks.append(val_check(epoch, step, round(epoch + (step + 1) / len(data), 6)))
+        checks.append(val_check(epoch, len(data) - 1, epoch + 1))
         record = dict(epoch=epoch + 1, train={k: v / seen for k, v in sums.items()},
-                      val=validation, seconds=time.perf_counter() - tick,
+                      val=checks[-1]['val'], seconds=time.perf_counter() - tick,
                       node_eligible_batch_fraction=(eligible / len(data)).tolist(),
                       peak_vram_bytes=torch.cuda.max_memory_allocated(device) if device.type == 'cuda' else 0)
+        if len(checks) > 1:
+            record['val_checks'] = checks
         history.append(record)
-        improved = validation['macro_f1'] > best
-        best = max(best, validation['macro_f1'])
-        checkpoint = dict(state_dict=model.state_dict(), optimizer=optimizer.state_dict(),
-                          epoch=epoch, config=config, initial_detector_hash=init_hash,
-                          manifest=m, history=history, best_val_f1=best,
-                          queue={n: t.detach().cpu().clone() for n, t in queue.named_buffers()} if queue else None,
-                          rng_python=random.getstate(), rng_numpy=np.random.get_state(),
-                          rng_torch=torch.get_rng_state(),
-                          rng_cuda=torch.cuda.get_rng_state_all() if device.type == 'cuda' else None)
-        if improved:
-            atomic_save(checkpoint, output / 'best.pt')
-        atomic_save(checkpoint, output / 'last.pt')
+        atomic_save(make_checkpoint(epoch, epoch + 1, full=True), output / 'last.pt')
         (output / 'history.json').write_text(json.dumps(history, indent=2), encoding='utf-8')
         print(json.dumps(record), flush=True)
         if args.stop_after is not None and epoch + 1 >= args.stop_after:
@@ -262,9 +346,9 @@ def evaluate(args):
         completed = json.loads(history_path.read_text()) if history_path.exists() else []
         if not completed or completed[-1]['epoch'] != cfg['epochs']:
             raise ValueError('Finish the planned Stage-1 epochs before outer-test evaluation; use --split val for pilot')
-        selected = max(completed, key=lambda r: r['val']['macro_f1'])
-        if ckpt['epoch'] + 1 != selected['epoch']:
-            raise ValueError('Test requires the best inner-validation checkpoint (earliest epoch on ties)')
+        selected, _ = best_point(completed)
+        if ckpt.get('progress', ckpt['epoch'] + 1) != selected:
+            raise ValueError('Test requires the best inner-validation checkpoint (earliest check on ties)')
     m = load_manifest(args.manifest, args.data_root)
     if digest(args.manifest) != cfg['manifest_hash']:
         raise ValueError('Evaluation manifest differs from training')
@@ -279,7 +363,8 @@ def evaluate(args):
                   stage=3 if 'experiment' in ckpt else 1,
                   config=cfg, initial_detector_hash=reference['initial_detector_hash'],
                   checkpoint_hash=digest(args.checkpoint),
-                  selected_epoch=ckpt['epoch'] + 1, au_names=AU_NAMES)
+                  selected_epoch=ckpt['epoch'] + 1, selected_progress=ckpt.get('progress', ckpt['epoch'] + 1),
+                  au_names=AU_NAMES)
     if 'experiment' in ckpt:
         result['downstream'] = {k: reference[k] for k in ('stage2', 'stage3')}
     else:
@@ -323,6 +408,12 @@ def main():
     tr.add_argument('--no-pretrained', action='store_true', help='Only for smoke tests or a separate random-init study')
     tr.add_argument('--resume', default='')
     tr.add_argument('--stop-after', type=int, help='Stop after this epoch without changing schedule; resume from last.pt')
+    tr.add_argument('--ema-decay', type=float, default=0.,
+                    help='0 = off. >0: evaluate/select/save EMA weights (warm-up (1+t)/(10+t))')
+    tr.add_argument('--val-per-epoch', type=int, default=1,
+                    help='inner-val evaluations per epoch; checkpoint chosen over all of them (earliest on ties)')
+    tr.add_argument('--backbone-lr-mult', type=float, default=1.,
+                    help='backbone lr = lr × this; heads/projections keep lr')
     ev.add_argument('--checkpoint', required=True)
     ev.add_argument('--split', choices=['val', 'test'], default='test')
     args = p.parse_args()
