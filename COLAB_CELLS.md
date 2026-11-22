@@ -491,8 +491,8 @@ print(f'Chi tiết: {SMOKE}/results/<variant>/fold<k>/seed0/decode_val.json | lu
 
 Có sẵn dạng notebook: [notebooks/Bao_cao_log.ipynb](notebooks/Bao_cao_log.ipynb).
 - Ghi `MyDrive/Sym/reports/status_<ngày>_<giờ>.md` và tự tải về máy.
-- Nội dung: tóm tắt mọi run, bảng theo epoch của `runs_aug*`, Tầng 2 chỉ val, đuôi 8 log mới nhất.
-- Không in số test. Nếu log có token, cell tự che đi.
+- Nội dung: tóm tắt mọi run, bảng theo epoch của `runs_aug*`, Tầng 2 chỉ val (kèm F1 và ngưỡng từng AU, đủ để đọc D2), đuôi 8 log mới nhất.
+- Không in số test: log có kết quả test thì không in đuôi. Nếu log có token, cell tự che đi.
 
 ```python
 # ==== Cell F: gom trạng thái run + Tầng 2 + đuôi log thành 1 file .md để gửi Claude (chỉ đọc, không cần GPU/token) ====
@@ -509,6 +509,8 @@ VN     = timezone(timedelta(hours=7))
 NOW    = datetime.now(VN)
 DETAIL = ('runs_aug1', 'runs_aug2', 'runs_aug3')   # in bảng theo epoch; thư mục khác chỉ in tóm tắt
 N_LOGS, TAIL = 8, 40                               # số log mới nhất được in đuôi, số dòng cuối mỗi log
+# log có kết quả test thì không in đuôi (evaluate / decode / summarize / check_stage1)
+TEST_LOG = re.compile(r'"split":\s*"test"|--split\W+test|TEST MACRO-F1|, test \d+ frame|test F1')
 FENCE = '`' * 3                                    # viết gián tiếp để cell nhúng được trong khối code markdown
 out = []
 w = out.append
@@ -601,12 +603,27 @@ for name in sorted(p.name for p in SYM.glob('stage2*') if p.is_dir()):
         w(f"| {'/'.join(p.parts[-4:-1])} | {d['n_rules']} | "
           + ' | '.join(f"{100 * M[m]['val_f1']:.2f}" for m in ('C0', 'C1', 'R0', 'R1', 'R_FACS'))
           + f" | {M['R0']['lambda_']:g} | {M['R_FACS']['lambda_']:g} |")
+    if res:
+        w('\n| run (val, theo AU) | hàng | ' + ' | '.join(f'AU{a}' for a in AU) + ' |')
+        w('|---' * (len(AU) + 2) + '|')
+    for p in res:
+        d = rd(p)
+        if not d:
+            continue
+        tag = '/'.join(p.parts[-4:-1])
+        for m in ('C0', 'C1', 'R0'):
+            w(f'| {tag} | F1 {m} | ' + ' | '.join(f'{100 * x:.1f}' for x in d['methods'][m]['val_f1_au']) + ' |')
+        w(f'| {tag} | ngưỡng C1 | ' + ' | '.join(f'{t:.2f}' for t in d['thresholds_c1']) + ' |')
 
 w('\n## Log mới nhất (MyDrive/Sym/logs)')
 logs = sorted((SYM / 'logs').glob('*.log'), key=lambda p: p.stat().st_mtime, reverse=True)
 w('\n'.join(f'- {p.name} — {p.stat().st_size / 1e3:.0f} KB, sửa {age(p)}' for p in logs[:2 * N_LOGS]))
 for p in logs[:N_LOGS]:
-    kept = [s for s in map(short_line, p.read_text(errors='replace').splitlines()) if s]
+    raw = p.read_text(errors='replace')
+    if TEST_LOG.search(raw):
+        w(f'\n### {p.name} — không in đuôi (log có kết quả test)')
+        continue
+    kept = [s for s in map(short_line, raw.splitlines()) if s]
     w(f'\n### {p.name} — {TAIL} dòng cuối (đã bỏ dòng tiến độ step)\n{FENCE}text')
     w('\n'.join(kept[-TAIL:]))
     w(FENCE)
