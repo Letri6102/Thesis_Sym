@@ -60,6 +60,7 @@ runs_aug2/                   B2: aug + EMA + val dày + LR backbone, chỉ fold 
 stage2_aug2/                 cell D2: Tầng 2 chỉ val trên runs_aug2
 runs_swin_probe/             dò Swin-B (đang rỗng)
 stage2_v2/                   Tầng 2 chuẩn (stage2_decoder): rules/fold{k}/, results/<variant>/fold{k}/seed{s}/, summary.json
+contrast_ci/summary.json     CI full − baseline trên test (stage2_decoder/contrast_ci.py) — chỉ tạo một lần, khi mở test
 stage2_out/                  Tầng 2 bản notebook 13/11 trên detector cũ — chỉ là thăm dò
 stage2_smoke_retry1/         cell E: chạy thử stage2_decoder trên runs_retry1 + splits cũ, CHỈ VAL — kiểm module, không báo cáo
 failed_runs/, logs/, reports/
@@ -134,7 +135,8 @@ Quy tắc cho mọi cell:
 7. **Rò rỉ khi chọn cấu hình chung trên val (phát hiện 22/11): khoá cấu hình để không rò thêm; phần đã nhìn phải công bố (§6).**
    - Val fold 2 = SN008 (test fold 1), SN016 và SN032 (test fold 3). Gộp val 3 fold thì chạm 2/9, 2/9, 3/9 subject test của fold 1, 2, 3.
    - Không chọn cấu hình trên val fold 2 hay val gộp rồi áp cho mọi fold. Chọn checkpoint, ngưỡng, λ riêng trong từng fold thì sạch.
-8. **CHẶN mở test** cho tới khi có đủ cả ba:
+8. **CHẶN mở test** cho tới khi xong các mục sau:
    - đủ 18 run;
-   - code CI bootstrap theo subject cho `full − baseline` (đề cương §6 yêu cầu; `summarize_experiments.py` và `cross_variant` của Tầng 2 chỉ có điểm). Viết trong `stage2_decoder/` để khỏi đụng file bị hash;
+   - ~~code CI cho `full − baseline`~~ **XONG 22/11**: `stage2_decoder/contrast_ci.py` (test: `tests/test_contrast_ci.py`). Không đọc file test nào nếu chưa đủ 18 run đúng khoá; `--check-only` (cell H) không bao giờ đọc test. Test `test_lock_matches_code_and_cell_g` đỏ nghĩa là file bị hash đã đổi: không push.
    - chốt và cài dòng (b) refit (chưa có code), hoặc chính thức bỏ. Chỉ dòng (b) được đặt cạnh 63.0, nên phải xong trước lần mở test duy nhất.
+   - **CHỜ QUYẾT (22/11), phải chốt trước khi nhìn kết quả các seed:** quy tắc §6 không tính nhiễu giữa các lần train. Đề xuất thêm điều kiện "Δ > 0 ở cả 3 seed" (số mô phỏng ở đề cương §6). Chưa chốt thì code giữ nguyên quy tắc §6; Claude không tự đổi.

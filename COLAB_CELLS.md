@@ -767,6 +767,18 @@ drive.flush_and_unmount()
 
 ---
 
+## H. Kiểm đủ 18 run đúng khoá — CPU, KHÔNG đọc test
+
+Chạy Setup với `IMAGES = False`, rồi chạy cell này. Cell chỉ đọc `config.json`, `history.json` và kiểm `best.pt` có tồn tại. Chưa đủ thì cell liệt kê run thiếu hoặc lệch rồi báo lỗi.
+
+Lệnh tính CI thật (`--output`) **không** nằm ở đây: nó thuộc cell mở test, viết sau khi xong các điều kiện ở CLAUDE.md §7 mục 8.
+
+```python
+run_logged([sys.executable, '-u', '-m', 'stage2_decoder.contrast_ci', '--runs', RUNS, '--check-only'], 'contrast_ci_check')
+```
+
+---
+
 ## Phụ lục
 
 **Kéo log và kết quả về máy để phân tích** (bỏ ảnh, nhãn gốc, trọng số):
