@@ -306,7 +306,7 @@ Cộng các mức thấp được 62.78 và các mức cao được 66.5, nhưng
 
 **Contrastive được coi là có đóng góp** khi thoả cả hai bước:
 1. Chọn **một** cấu hình contrastive trên inner val **trước khi mở test**: `full` hoặc cấu hình sweep tốt nhất trên val.
-   > [cần quyết, 22/11] "Tốt nhất trên val" chỉ sạch khi chọn **riêng trong từng fold**. Val gộp 3 fold, hoặc val fold 2 dùng cho mọi fold, đều chứa subject test của fold khác. Định trước `full` thì không dính lỗi này.
+   > **Đã chốt 22/11: `full`, không sweep**, trên cấu hình pilot đã khoá (CLAUDE.md §6). Lý do: val gộp, hoặc val fold 2 dùng cho mọi fold, đều chứa subject test của fold khác.
 2. Cấu hình đó so với `baseline` có mean Δ > 0 qua 3 seed, và CI không chứa 0 ở ít nhất 2/3 seed.
 
 Chỉ một so sánh chính này được mở test. Các variant còn lại được báo cáo như ablation và không dùng làm tiêu chí, để tránh so sánh nhiều lần.
@@ -329,7 +329,7 @@ Chỉ một so sánh chính này được mở test. Các variant còn lại đ�
 | `strong_train_aug` quá mạnh cho AU tinh: `RandomErasing` che vùng AU mà nhãn giữ nguyên; ColorJitter 0.4 + grayscale làm mờ dấu hiệu nhỏ | trung bình | run thử 1 fold so với bản chỉ crop + lật; nếu F1 các AU nhỏ (AU1/2/9/26) tụt thì bỏ `RandomErasing` trước |
 | `full + queue` không giúp AU hiếm vì queue chỉ cấp cho `L_global` | trung bình | cài node-level queue, hoặc bỏ giả thuyết này |
 | Quá khớp vào inner val: λ và checkpoint đều chọn trên 3 subject (ngưỡng C1 chỉ ở nhánh phụ) | trung bình | không thêm bước chọn trên val (bỏ lọc help−hurt); với AU thưa trong val thì dùng ngưỡng cố định 0.5 |
-| **Rò rỉ khi chọn siêu tham số chung** (22/11): val fold 2 gồm SN008 (test fold 1), SN016 và SN032 (test fold 3); val gộp chạm 2/9, 2/9, 3/9 subject test | **cao** | định trước một cấu hình, hoặc tune lồng riêng từng fold; công bố mọi lần đã nhìn val fold 2 |
+| **Rò rỉ khi chọn siêu tham số chung** (22/11): val fold 2 gồm SN008 (test fold 1), SN016 và SN032 (test fold 3); val gộp chạm 2/9, 2/9, 3/9 subject test | **cao** | **đã khoá cấu hình pilot (22/11)**, không tune thêm; công bố mọi lần đã nhìn val fold 2 |
 | Inner val fold 1 quá thưa (AU2 chỉ 4 frame dương / 14.535) | trung bình | **đã xử lý (20/11)**: `splits_v2` đã sinh trên Drive, val fold 1 = SN002, SN016, SN032 |
 | Fit fold 1 trong `splits_v2` thiếu AU1/AU2/AU26 (khoảng −45%) | trung bình | chấp nhận có chủ đích; báo cáo điểm theo từng fold; cân nhắc refit trên fit + val cho model cuối |
 | Hai bản cài Tầng 2 (notebook đã chạy và module `stage2_decoder` chỉ có ở local) đọc val ở hai đường dẫn khác nhau | trung bình | chọn một bản làm chuẩn, sửa đường dẫn, đo lại trên cùng một bản |
@@ -366,4 +366,5 @@ Chỉ một so sánh chính này được mở test. Các variant còn lại đ�
     - thống nhất về module `stage2_decoder`: đường dẫn `evaluation_val/`, nhánh `R_FACS`, chế độ `--val-only`, test end-to-end;
     - lấy R0 làm nhánh chính và bỏ R\*; tiêu chí ở §6 đổi thành `R0 − C0`;
     - đầu ra mới ở `MyDrive/Sym/stage2_v2/`.
-13. **Cập nhật 22/11 — pilot và D2:** pilot vẫn đạt đỉnh ở epoch 1; gói EMA + LR không có bằng chứng có lợi; phát hiện rò rỉ khi chọn cấu hình chung trên inner val (§6, §7). Chưa chốt cách xử lý.
+13. **Cập nhật 22/11 — pilot và D2:** pilot vẫn đạt đỉnh ở epoch 1; gói EMA + LR không có bằng chứng có lợi; phát hiện rò rỉ khi chọn cấu hình chung trên inner val (§6, §7).
+14. **Khoá cấu hình 22/11:** cấu hình pilot, chỉ `baseline` và `full`, 18 run. Khoá sau khi đã nhìn val fold 2, và pilot trượt 1/3 tiêu chí: cả hai điều này phải công bố. Trước khi mở test còn thiếu CI cho `full − baseline` và quyết định dòng (b) refit.

@@ -378,7 +378,9 @@ run_logged([sys.executable, '-u', '-m', 'stage2_decoder.run_all', '--runs', RUNS
             '--folds', *FOLDS, '--seeds', *SEEDS, '--val-only'], 'stage2_valonly')
 ```
 
-**Mở test** (chỉ làm **một lần**, sau khi đã chốt Tầng 1 và đủ 3 fold): dùng đúng lệnh trên nhưng **bỏ** `'--val-only'` và để `FOLDS = [1, 2, 3]`. Lệnh sẽ evaluate test, decode và gộp bằng `summarize` thành `stage2_v2/summary.json`. So sánh chính là `R0 − C0`.
+Đủ 18 run thì chạy cell này với `FOLDS = [1, 2, 3]`, `SEEDS = [0, 1, 2]`, **vẫn giữ** `--val-only`.
+
+**Không mở test bằng cách sửa cell này** (đính chính 22/11: hướng dẫn cũ để `SEEDS = [0]`, sẽ mở test khi mới có 1 seed). Cell mở test sẽ được viết riêng, sau khi đủ ba điều kiện ở CLAUDE.md §7 mục 8.
 
 ---
 
@@ -640,6 +642,127 @@ for line in out:
         print(line.strip())
 print(f'\nĐã ghi {len(text) / 1e3:.0f} KB → MyDrive/Sym/reports/{name}; đang tải về máy...')
 files.download(f'/content/{name}')
+```
+
+---
+
+## G. Train 18 run với cấu hình đã KHOÁ — GPU, khoảng 40 giờ, chạy sau Setup
+
+Có sẵn dạng notebook kèm Setup: [notebooks/Train_18_run.ipynb](notebooks/Train_18_run.ipynb).
+- **Kiểm khoá trước khi train:** hash code, 3 manifest, phiên bản thư viện, trọng số ImageNet, config của mọi run đã có.
+- **Chạy lại là tiếp tục:** run xong thì bỏ qua, run dở thì resume. Run bị ngắt trong epoch 1 được cất sang `failed_runs/` rồi train lại (cell B không xử lý được ca này).
+- **Chặn:** run vừa được ghi dưới 15 phút (có thể phiên khác đang train), Drive trống dưới 12 GB.
+- Không evaluate test.
+
+```python
+# ==== Cell G: cấu hình KHOÁ 22/11 — train cho đủ 18 run trong runs_aug1 (2 pilot đã xong + 16). KHÔNG đụng test ====
+import hashlib
+SEEDS = [0, 1, 2]              # chạy song song: mỗi phiên một nhóm seed KHÔNG trùng nhau
+OLD_SESSION_DEAD = False       # chỉ đặt True khi đã tự kiểm phiên cũ tắt hẳn (Runtime → Manage sessions)
+
+# ---- Không sửa từ đây: đổi bất kỳ giá trị nào là phá khoá
+VARIANTS, FOLDS = ['baseline', 'full'], [1, 2, 3]
+EPOCHS, BATCH, WORKERS = 20, 32, 4
+LOCKED = dict(arc='resnet50', epochs=20, batch_size=32, workers=4, lr=1e-4, weight_decay=5e-4, temperature=0.1,
+              pretrained=True, ema_decay=0.0, val_per_epoch=1, backbone_lr_mult=1.0)
+LOCK_SRC = '94fcd27ef11c40cd30052f8d3dfeb8fb01b178b29655c24a4e8f46dc1604670e'
+LOCK_MANIFEST = {1: '00670123caf67f0661a0fc8cdafabadfc6965a488f987591c25e3a341dd04ba2',
+                 2: '19bd03dafc852f0e259cdff52ca666a62b3de16dd209d32a4ea2e7416b637cf2',
+                 3: '248bb62b6357642f8cf3b6011eb1c37d5cf301e0377220abab47c78889e673d7'}
+LOCK_ENV = {'torch': '2.14.1+cu130', 'torchvision': '0.29.1+cu130', 'numpy': '2.4.6', 'timm': '1.0.22', 'pillow': '11.3.0'}
+LOCK_WEIGHT = '19c8e357'       # đầu SHA-256 của trọng số ImageNet
+MIN_FREE_GB, BUSY_MIN = 12, 15
+
+def src_digest(src):
+    return hashlib.sha256(json.dumps(src, sort_keys=True).encode()).hexdigest()
+
+def run_dir(v, k, s):
+    return RUNS / v / f'fold{k}' / f'seed{s}'
+
+def n_epochs(out):
+    try:
+        return len(json.loads((out / 'history.json').read_text()))
+    except (OSError, ValueError):              # chưa có, hoặc bị ngắt lúc đang ghi
+        return 0
+
+def is_done(out):
+    return n_epochs(out) >= EPOCHS and all((out / n).exists() for n in ('config.json', 'best.pt', 'last.pt'))
+
+def check_config(v, k, s):
+    cfg = json.loads((run_dir(v, k, s) / 'config.json').read_text())
+    want = dict(LOCKED, variant=v, fold=k, seed=s, manifest_hash=LOCK_MANIFEST[k], environment_versions=LOCK_ENV)
+    bad = [key for key, val in want.items() if cfg.get(key) != val]
+    if src_digest(cfg.get('source_hashes', {})) != LOCK_SRC:
+        bad.append('source_hashes')
+    assert not bad, f'{v}/fold{k}/seed{s} lệch cấu hình khoá ở {bad}: dừng, gửi Claude xem'
+
+# 1) Kiểm khoá trước khi train bất cứ gì
+assert torch.cuda.is_available(), 'Cần runtime GPU'
+assert str(DATA).startswith('/content/'), 'Ảnh chưa nằm trong /content: chạy Setup với IMAGES = True'
+assert RUNS.name == 'runs_aug1', f'RUNS phải là runs_aug1, đang là {RUNS}'
+probe = ('import sys, json, importlib.metadata as M\n'
+         'from train_contrastive import source_files\n'
+         'from experiment_data import load_manifest\n'
+         'for k in (1, 2, 3): load_manifest(f"{sys.argv[1]}/fold{k}.json", sys.argv[2])\n'
+         'env = {k: M.version(k) for k in ("torch", "torchvision", "numpy", "timm", "pillow")}\n'
+         'print("LOCK" + json.dumps(dict(src=source_files(), env=env)))')
+r = subprocess.run([sys.executable, '-c', probe, str(SPLITS), str(DATA)], cwd=CODE, capture_output=True, text=True)
+assert r.returncode == 0, 'Kiểm code/manifest lỗi:\n' + r.stderr[-2000:]
+now = json.loads(next(x for x in r.stdout.splitlines() if x.startswith('LOCK'))[4:])
+assert src_digest(now['src']) == LOCK_SRC, 'Code bị hash KHÁC bản đã khoá: dừng, gửi Claude xem'
+assert now['env'] == LOCK_ENV, (
+    f"Phiên bản thư viện khác bản khoá: {now['env']}\nChạy 2 dòng sau ở một cell riêng rồi chạy lại cell G:\n"
+    f"!pip install -q torch=={LOCK_ENV['torch']} torchvision=={LOCK_ENV['torchvision']} --index-url https://download.pytorch.org/whl/cu130\n"
+    f"!pip install -q numpy=={LOCK_ENV['numpy']} timm=={LOCK_ENV['timm']} pillow=={LOCK_ENV['pillow']}")
+for k in FOLDS:
+    assert hashlib.sha256((SPLITS / f'fold{k}.json').read_bytes()).hexdigest() == LOCK_MANIFEST[k], f'splits_v2/fold{k}.json đã đổi'
+weight = CODE / 'checkpoints' / 'resnet50-19c8e357.pth'
+assert weight.exists() and hashlib.sha256(weight.read_bytes()).hexdigest().startswith(LOCK_WEIGHT), 'Thiếu hoặc sai trọng số ImageNet'
+for v in VARIANTS:
+    assert is_done(run_dir(v, 2, 0)), f'Không thấy pilot {v}/fold2/seed0 đủ 20 epoch: đợi Drive đồng bộ, đừng train lại'
+
+ALL = [(v, k, s) for s in (0, 1, 2) for k in FOLDS for v in VARIANTS]     # baseline và full cùng fold/seed chạy liền nhau
+for job in ALL:
+    if (run_dir(*job) / 'config.json').exists():
+        check_config(*job)
+todo = [j for j in ALL if j[2] in SEEDS and not is_done(run_dir(*j))]
+print(f'Khoá OK | xong {sum(is_done(run_dir(*j)) for j in ALL)}/18 | phiên này còn {len(todo)} run, khoảng {2.5 * len(todo):.0f} giờ L4', flush=True)
+
+# 2) Hàng đợi: chạy lại cell là tiếp tục
+for i, (v, k, s) in enumerate(todo, 1):
+    out, name = run_dir(v, k, s), f'{v}_fold{k}_seed{s}'
+    free = shutil.disk_usage('/content/drive').free / 1e9
+    print(f'\n[{i}/{len(todo)}] {name} | Drive trống {free:.0f} GB', flush=True)
+    assert free >= MIN_FREE_GB, (f'Drive còn {free:.0f} GB, cần {MIN_FREE_GB} GB. Xem Thùng rác trên drive.google.com '
+                                 '(bản cũ của last.pt/best.pt có thể nằm ở đó), kiểm kỹ trước khi xoá vĩnh viễn, rồi chạy lại cell')
+    seen = [out / n for n in ('config.json', 'history.json', 'last.pt', 'best.pt') if (out / n).exists()]
+    if seen and not OLD_SESSION_DEAD:
+        age = (time.time() - max(p.stat().st_mtime for p in seen)) / 60
+        assert age >= BUSY_MIN, (f'{name} vừa được ghi {age:.0f} phút trước, có thể phiên khác còn đang train. '
+                                 f'Đợi đủ {BUSY_MIN} phút, hoặc tắt hẳn phiên cũ rồi đặt OLD_SESSION_DEAD = True')
+    cmd = [sys.executable, '-u', 'train_contrastive.py', 'train', '--variant', v, '--seed', s,
+           '--arc', 'resnet50', '--data-root', DATA, '--manifest', SPLITS / f'fold{k}.json',
+           '--output', out, '--epochs', EPOCHS, '--batch-size', BATCH, '--workers', WORKERS]
+    if (out / 'last.pt').exists():
+        cmd += ['--resume', out / 'last.pt']
+    elif (out / 'config.json').exists():       # bị ngắt trong epoch 1: chưa có gì để resume
+        assert not (out / 'history.json').exists(), f'{name} có history mà chưa thấy last.pt: đợi Drive đồng bộ rồi chạy lại'
+        dest = SYM / 'failed_runs' / f'aug1_{name}_{time.strftime("%Y%m%d_%H%M%S")}'
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(out), str(dest))
+        print(f'  lần trước bị ngắt trong epoch 1 → cất sang failed_runs/{dest.name}, train lại', flush=True)
+    run_logged(cmd, f'train_aug1_{name}')
+    if n_epochs(out) < EPOCHS and (out / 'last.pt').exists():    # bị ngắt giữa ghi last.pt và history.json ở epoch cuối
+        h = torch.load(out / 'last.pt', map_location='cpu', weights_only=False)['history']
+        (out / 'history.json').write_text(json.dumps(h, indent=2))
+    assert is_done(out), f'{name} chưa đủ 20 epoch hoặc thiếu checkpoint'
+    check_config(v, k, s)
+
+n_done = sum(is_done(run_dir(*j)) for j in ALL)
+print(f'\nXONG phần của phiên này | tổng {n_done}/18 run.'
+      + (' Đủ 18: gửi báo cáo cho Claude, CHƯA mở test.' if n_done == 18 else ''), flush=True)
+print('Đang chờ Drive đồng bộ...', flush=True)
+drive.flush_and_unmount()
 ```
 
 ---

@@ -74,10 +74,11 @@ Contrastive_V1/remote_stage2/ script cho máy remote (runs_retry1, splits cũ) �
 MultiviewSymAU-master/       bản cài đặt lại SymGraphAU (Stage 2/3 cũ) để đối chiếu
 Tang2_Decoder.ipynb          Tầng 2 bản notebook 13/11 — LỖI THỜI, lệch đề cương; dùng stage2_decoder
 De_cuong_nghien_cuu.md       đề cương bản 2
+notebooks/                   Train_18_run.ipynb (Setup + cell G) và Bao_cao_log.ipynb (cell F) — bản đang dùng
 CONTEXT.md                   baseline SymGraphAU (paper), số cần vượt, đối chiếu pipeline, hướng cải tiến
 ```
 
-`Contrastive_V1/COLAB_PRO.md` và `notebooks/Colab_Contrastive_V1.ipynb` đã **lỗi thời**: hai file này giả định code nằm ở `MyDrive/SymAU` trên Drive. Dùng mục 5 thay thế.
+`Contrastive_V1/COLAB_PRO.md` và `Contrastive_V1/notebooks/Colab_Contrastive_V1.ipynb` đã **lỗi thời**: hai file này giả định code nằm ở `MyDrive/SymAU` trên Drive. Dùng mục 5 thay thế.
 
 ## 5. Cell Colab chuẩn → [COLAB_CELLS.md](COLAB_CELLS.md)
 
@@ -99,6 +100,11 @@ Quy tắc cho mọi cell:
 - Test đã bị mở trên detector cũ (29/10 cho Tầng 1, 13/11 cho Tầng 2). Các số đó chỉ là **thăm dò**; không so trực tiếp với run mới.
 - Cả 9 run trong `runs_retry1` chạy **không augmentation** (hash khớp `experiment_data.py.bak_20261113_1402`). `strong_train_aug` có trong `experiment_data.py` từ 13/11; mọi run mới ghi vào `runs_aug1`.
 - Tầng 2: nhánh chính là **R0** (luật dữ liệu, bias 0, λ chọn trên val); so sánh chính là `R0 − C0`. Bỏ R\* (20/11). C1/R1 (ngưỡng chỉnh trên 3 subject val) chỉ là nhánh phụ. `R_FACS` (5 luật viết tay) trả lời Q2a. Giai đoạn thiết kế chạy `--val-only`.
+- **KHOÁ cấu hình Tầng 1 (chủ dự án chốt 22/11):** đúng cấu hình pilot `runs_aug1`.
+  - ResNet-50, aug mạnh, lr 1e-4, wd 5e-4, 20 epoch, batch 32, workers 4; không EMA, val 1 lần/epoch, LR backbone ×1.
+  - Chỉ `baseline` và `full`; 3 fold × seed 0/1/2 = 18 run, train bằng cell G (cell tự kiểm khoá code, manifest, thư viện).
+  - **Không sửa hay push file bị hash, không tune, không thêm variant cho tới khi đủ 18 run.**
+  - Phải công bố trong luận văn: pilot trượt tiêu chí "đỉnh sau epoch 2"; việc khoá diễn ra sau khi đã nhìn val fold 2 (chứa subject test của fold 1/3); aug được chọn 13/11, sau lần mở test thăm dò 29/10.
 - Khi theo dõi loss, đọc các cột thô `global_con`/`node_con`/`cross_con` trong `history.json`. Không đọc `total`, vì cột này có nhân hệ số ramp.
 
 ## 7. Việc đang mở (cập nhật 22/11/2026)
@@ -118,15 +124,17 @@ Quy tắc cho mọi cell:
 
    - Dấu của `pilot − cũ`, `B2 − pilot`, `full − baseline` **đổi theo cách đo và theo variant**. 1 fold + 1 seed không xếp hạng được cấu hình; không gọi chênh vài điểm là cải thiện.
    - Val fold 2 (3 subject) **không so được** với 63.0 của paper (test, 3 fold).
-3. Sau pilot: chạy Tầng 2 chỉ trên val (cell D) cho fold 2. Phần code Tầng 2 đã thống nhất xong ngày 20/11.
+3. **ĐANG LÀM: train nốt 16 run** (cell G, `notebooks/Train_18_run.ipynb`, khoảng 40 giờ L4). Đủ 18 run thì chạy Tầng 2 chỉ val (cell D, 3 fold × 3 seed).
 4. ~~Cell E~~ **XONG 21/11**: `stage2_decoder` chạy đúng trên 6 run cũ, chỉ val, mất khoảng 30 giây. Kết quả tóm tắt nằm ở đề cương §6 và không dùng để báo cáo. Trên val, `R0 − C0` chỉ từ +0.0 đến +0.9, trong khi C1 − C0 từ +1.5 đến +10.6.
 5. **Gói EMA + val 4 lần/epoch + LR backbone 0.1×** (code trên `main` từ `586b221`, cờ mặc định tắt): **không có bằng chứng có lợi, đề xuất không đưa vào cấu hình chính.** EMA và LR chưa tách được.
    - D2 (22/11): C0 khớp lúc train (68.53 / 68.16); C1 72.27 / 72.00 (tune trên chính val); `R0 − C0` = +0.26 / +0.04.
    - AU6 không cứu được bằng ngưỡng chung (42.1 → 42.2 / 41.7 → 45.5), và bị dự đoán **thừa** 1.5–1.65 lần. Chưa chứng minh "mất đặc trưng do aug".
    - Đính chính 21/11: mức "AU6 tụt 20 điểm" là so với epoch đẹp nhất của run cũ (AU6 run cũ dao động 32.5–63.8 theo epoch); so trung vị thì 10.6 / 11.9 điểm.
 6. Tuỳ chọn, cho Q2b: Stage 2/3 của SymGraphAU trong `MultiviewSymAU-master/` (đồ thị CNF + GCN) còn lỗi sigmoid hai lần và mất dấu phủ định. Đây không phải phương pháp chính; nếu không kịp thì Q2b trả lời bằng lập luận (đề cương §1).
-7. **CHỜ CHỦ DỰ ÁN QUYẾT (22/11) — rò rỉ khi chọn cấu hình chung trên val:** inner val của fold này là outer test của fold khác.
-   - Val fold 2: SN008 (test fold 1), SN016 và SN032 (test fold 3). Gộp val 3 fold thì chạm 2/9, 2/9, 3/9 subject test của fold 1, 2, 3.
-   - Vì vậy **không chọn aug/EMA/LR/variant trên val fold 2 (hay val gộp) rồi áp cho mọi fold**. Chọn checkpoint, ngưỡng, λ riêng trong từng fold thì không dính lỗi này.
-   - (A, đề xuất) khoá cấu hình pilot vì đã định trước từ 13/11, chạy nốt 16 run (~40 giờ L4), công bố việc pilot trượt 1 tiêu chí. (B) tune lồng: mỗi fold tự chọn trên val của nó (2 ứng viên ~85 giờ).
-   - Chưa quyết thì chưa chạy thêm thí nghiệm tune và chưa mở test.
+7. **Rò rỉ khi chọn cấu hình chung trên val (phát hiện 22/11): khoá cấu hình để không rò thêm; phần đã nhìn phải công bố (§6).**
+   - Val fold 2 = SN008 (test fold 1), SN016 và SN032 (test fold 3). Gộp val 3 fold thì chạm 2/9, 2/9, 3/9 subject test của fold 1, 2, 3.
+   - Không chọn cấu hình trên val fold 2 hay val gộp rồi áp cho mọi fold. Chọn checkpoint, ngưỡng, λ riêng trong từng fold thì sạch.
+8. **CHẶN mở test** cho tới khi có đủ cả ba:
+   - đủ 18 run;
+   - code CI bootstrap theo subject cho `full − baseline` (đề cương §6 yêu cầu; `summarize_experiments.py` và `cross_variant` của Tầng 2 chỉ có điểm). Viết trong `stage2_decoder/` để khỏi đụng file bị hash;
+   - chốt và cài dòng (b) refit (chưa có code), hoặc chính thức bỏ. Chỉ dòng (b) được đặt cạnh 63.0, nên phải xong trước lần mở test duy nhất.

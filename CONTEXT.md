@@ -127,11 +127,13 @@ Trên BP4D (ngoài phạm vi luận văn): 65.3 với ResNet-50, 64.8 với Swin
 
 ---
 
-## 6. Hướng cải tiến — đề xuất 21/11, CHƯA CHỐT
+## 6. Hướng cải tiến — đề xuất 21/11, ĐÓNG BĂNG từ 22/11
+
+**Cấu hình đã khoá ngày 22/11** (CLAUDE.md §6): chỉ mục 1. Mục 2–7 không đưa vào 18 run này, chỉ là hướng phát triển sau.
 
 Ràng buộc chung:
 - Mọi thay đổi chỉ được chọn dựa trên inner val.
-- Không sửa file bị hash khi pilot còn chạy (CLAUDE.md §3).
+- Không sửa file bị hash cho tới khi đủ 18 run (CLAUDE.md §3, §6).
 - ~~Mỗi thay đổi thử trước trên fold 2, seed 0~~ **Sai, rút lại 22/11:** cả 3 subject val fold 2 là subject test của fold 1/3, nên chọn cấu hình ở đó rồi áp cho mọi fold là rò rỉ. Hoặc định trước cấu hình, hoặc tune lồng riêng từng fold.
 
 | # | Tầng | Thay đổi | Lý do | Chi phí | Trạng thái |
