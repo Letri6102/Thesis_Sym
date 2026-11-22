@@ -111,10 +111,10 @@ Trên BP4D (ngoài phạm vi luận văn): 65.3 với ResNet-50, 64.8 với Swin
    
    Tiêu chí: CI không chứa 0 ở ít nhất 2/3 số seed (đề cương §6).
 
-**Hiện trạng (21/11):**
+**Hiện trạng (22/11):**
 - Detector cũ, không augmentation, test thăm dò ngày 29/10: `baseline` seed 0 = **60.53**, kém 62.94 là 2.41 điểm. Thấp hơn cả JFL của paper (62.1). Số này chỉ là thăm dò.
 - Tầng 2 chạy thử trên run cũ, chỉ val, λ chọn trên chính val: `R0 − C0` từ +0.0 đến +0.9.
-- Pilot `runs_aug1` fold 2 đang chạy trên Colab (L4).
+- Pilot `runs_aug1` fold 2, seed 0 xong: val tốt nhất 76.8 / 74.9 (`baseline` / `full`), đều ở epoch 1. Đây là val của 3 subject, **không so được** với 63.0. Chi tiết ở CLAUDE.md §7.
 
 ---
 
@@ -132,13 +132,13 @@ Trên BP4D (ngoài phạm vi luận văn): 65.3 với ResNet-50, 64.8 với Swin
 Ràng buộc chung:
 - Mọi thay đổi chỉ được chọn dựa trên inner val.
 - Không sửa file bị hash khi pilot còn chạy (CLAUDE.md §3).
-- Mỗi thay đổi thử trước trên fold 2, seed 0, giống pilot.
+- ~~Mỗi thay đổi thử trước trên fold 2, seed 0~~ **Sai, rút lại 22/11:** cả 3 subject val fold 2 là subject test của fold 1/3, nên chọn cấu hình ở đó rồi áp cho mọi fold là rò rỉ. Hoặc định trước cấu hình, hoặc tune lồng riêng từng fold.
 
 | # | Tầng | Thay đổi | Lý do | Chi phí | Trạng thái |
 |---|---|---|---|---|---|
-| 1 | 1 | Augmentation mạnh | run cũ quá khớp (`wa` → 0, val đạt đỉnh ở epoch 1–2) | đã có | **pilot đang chạy** |
-| 2 | 1 | Đánh giá val mỗi ¼ epoch + EMA trọng số | đỉnh val rơi vào epoch 1, nên checkpoint tốt có thể nằm giữa epoch; EMA làm mượt | sửa code nhỏ | **B2 xong 21/11:** val tốt nhất của `baseline` 0.685, trong khi run cũ không aug đạt 0.715. Đỉnh muộn hơn nhưng thấp hơn. Phần tụt chủ yếu ở AU6 (khoảng −20 ở cả 2 variant) và AU26; AU4 và AU12 tăng. Chưa giữ. Cần cell D2 (ngưỡng hay đặc trưng) và pilot (aug hay EMA/LR) để tách nguyên nhân. Đã merge vào `main` |
-| 3 | 1 | LR backbone nhỏ hơn head (1e-5 / 1e-4) | fine-tune trên chỉ 15 subject dễ quá khớp. Lưu ý: head + projection có 19.1M tham số, gần bằng backbone ResNet-50 (23.5M), và vẫn giữ lr 1e-4 | sửa code nhỏ | **đã code 21/11**, đi chung gói với mục 2 |
+| 1 | 1 | Augmentation mạnh | run cũ quá khớp (`wa` → 0, val đạt đỉnh ở epoch 1–2) | đã có | **pilot xong 22/11:** đỉnh cao hơn run cũ nhưng vẫn ở epoch 1; TB epoch cuối không nhất quán giữa variant |
+| 2 | 1 | Đánh giá val mỗi ¼ epoch + EMA trọng số | đỉnh val rơi vào epoch 1, nên checkpoint tốt có thể nằm giữa epoch; EMA làm mượt | sửa code nhỏ | **B2 + D2 xong 22/11:** không có bằng chứng có lợi (val tốt nhất kém pilot 8.7 / 7.5 điểm; TB epoch 11–20 thì +2.2 / −8.4). Đề xuất không dùng |
+| 3 | 1 | LR backbone nhỏ hơn head (1e-5 / 1e-4) | fine-tune trên chỉ 15 subject dễ quá khớp. Lưu ý: head + projection có 19.1M tham số, gần bằng backbone ResNet-50 (23.5M), và vẫn giữ lr 1e-4 | sửa code nhỏ | **đã thử trong B2**, chưa tách được khỏi EMA; đề xuất không dùng |
 | 4 | 1 | Contrastive **khác subject**: cặp dương phải đến từ hai subject khác nhau; thêm queue cho node loss | lỗi lớn nhất là lệch giữa subject (ngưỡng C1 lệch xa 0.5, chênh giữa fold ≥ 30 điểm); AU2/AU9 ít mẫu dương trong mỗi batch | variant mới | đóng góp chính, chờ pilot |
 | 5 | 1 | Swin-B | backbone tốt nhất của paper | gấp khoảng 2 lần GPU | chỉ so với 64.5 |
 | 6 | 2 | Ngưỡng C1 có giới hạn (lưới hẹp, hoặc co về 0.5) | C1 thắng lớn trên val nhưng dễ quá khớp 3 subject | CPU | đo lại sau pilot |

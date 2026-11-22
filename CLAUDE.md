@@ -56,6 +56,8 @@ splits/fold{1,2,3}.json      manifest CŨ (seed 2026, 3 subject val) — chỉ c
 splits_v2/fold{1,2,3}.json   manifest MỚI: như cũ + mỗi AU >= 100 frame dương trong val (chỉ fold 1 đổi)
 runs_retry1/                 9 run cũ, KHÔNG augmentation, ĐÓNG BĂNG — chỉ đọc, không ghi thêm
 runs_aug1/                   run mới với strong_train_aug
+runs_aug2/                   B2: aug + EMA + val dày + LR backbone, chỉ fold 2 seed 0 — thử nghiệm, không thuộc 18 run
+stage2_aug2/                 cell D2: Tầng 2 chỉ val trên runs_aug2
 runs_swin_probe/             dò Swin-B (đang rỗng)
 stage2_v2/                   Tầng 2 chuẩn (stage2_decoder): rules/fold{k}/, results/<variant>/fold{k}/seed{s}/, summary.json
 stage2_out/                  Tầng 2 bản notebook 13/11 trên detector cũ — chỉ là thăm dò
@@ -99,33 +101,32 @@ Quy tắc cho mọi cell:
 - Tầng 2: nhánh chính là **R0** (luật dữ liệu, bias 0, λ chọn trên val); so sánh chính là `R0 − C0`. Bỏ R\* (20/11). C1/R1 (ngưỡng chỉnh trên 3 subject val) chỉ là nhánh phụ. `R_FACS` (5 luật viết tay) trả lời Q2a. Giai đoạn thiết kế chạy `--val-only`.
 - Khi theo dõi loss, đọc các cột thô `global_con`/`node_con`/`cross_con` trong `history.json`. Không đọc `total`, vì cột này có nhân hệ số ramp.
 
-## 7. Việc đang mở (cập nhật 21/11/2026)
+## 7. Việc đang mở (cập nhật 22/11/2026)
 
 `splits_v2` đã sinh xong ngày 20/11.
 
 1. ~~Đóng gói ảnh~~ **XONG 21/11**: 27 tar trong `MyDrive/Sym/DISFA_img/` cùng `DONE.json`, tổng 8,65 GB, chạy hết 100 phút. Không chạy lại cell A.
-2. Pilot `baseline` + `full`, fold 2, `runs_aug1`: cell B, kiểm bằng cell C. **Chưa từng chạy:** báo cáo ngày 21/11 lúc 22:21 không thấy `runs_aug1` hay log `train_aug1` nào. Ngày 21/11, Setup đã chạy trên torch 2.14.1+cu130, torchvision 0.29.1, GPU L4, 12 CPU; Setup giải nén ảnh mất 5,6 phút. Nếu resume bị từ chối vì torch đổi phiên bản, cài lại đúng bản này trước khi resume.
+2. ~~Pilot~~ **XONG 22/11** (`runs_aug1`, fold 2, seed 0; torch 2.14.1+cu130, torchvision 0.29.1, numpy 2.4.6 — resume bị từ chối vì phiên bản thì cài lại đúng các bản này; L4, 2,5 giờ/run): **đạt 2/3 tiêu chí, tức là KHÔNG đạt** theo tiêu chí đã đặt.
+   - Đạt: `wa` cuối 0.0059 / 0.0072; val tốt nhất không thấp hơn run cũ. Trượt: đỉnh val ở **epoch 1** ở cả hai variant.
+   - Số val fold 2, cuối epoch (baseline / full):
+
+     | | tốt nhất | TB epoch 11–20 | epoch 20 |
+     |---|---|---|---|
+     | run cũ (không aug) | 71.5 / 70.5 | 68.1 / 66.2 | 68.5 / 67.0 |
+     | pilot (aug mạnh) | 76.8 / 74.9 | 62.4 / 70.1 | 60.5 / 69.5 |
+     | B2 (aug + EMA + LR) | 68.1 / 67.4 | 64.6 / 61.6 | 64.0 / 61.3 |
+
+   - Dấu của `pilot − cũ`, `B2 − pilot`, `full − baseline` **đổi theo cách đo và theo variant**. 1 fold + 1 seed không xếp hạng được cấu hình; không gọi chênh vài điểm là cải thiện.
+   - Val fold 2 (3 subject) **không so được** với 63.0 của paper (test, 3 fold).
 3. Sau pilot: chạy Tầng 2 chỉ trên val (cell D) cho fold 2. Phần code Tầng 2 đã thống nhất xong ngày 20/11.
 4. ~~Cell E~~ **XONG 21/11**: `stage2_decoder` chạy đúng trên 6 run cũ, chỉ val, mất khoảng 30 giây. Kết quả tóm tắt nằm ở đề cương §6 và không dùng để báo cáo. Trên val, `R0 − C0` chỉ từ +0.0 đến +0.9, trong khi C1 − C0 từ +1.5 đến +10.6.
-5. **Gói vệ sinh Tầng 1** gồm EMA, đánh giá val 4 lần/epoch và LR backbone 0.1× (cờ `--ema-decay`, `--val-per-epoch`, `--backbone-lr-mult`, mặc định tắt).
-   - Code và test nằm ở nhánh **`stage1-ema-valchecks`**. Nhánh này sửa file bị hash (`train_contrastive.py`, `EXPERIMENT_PROTOCOL.md`), nên **chỉ merge vào `main` sau khi pilot `runs_aug1` xong**.
-   - Chạy thử bằng cell B2 (ghi vào `runs_aug2`), so sánh bằng cell C2. Được chạy song song với pilot ở một phiên khác, với Setup đặt `BRANCH = 'stage1-ema-valchecks'`.
-   - Sau khi merge thì **không sửa file bị hash nào nữa** cho tới khi `runs_aug2` xong, vì merge fast-forward giữ nguyên byte của code.
-   - **B2 chạy xong ngày 21/11** trên L4, mỗi epoch 9 phút (đã gồm 4 lần đánh giá val), tức khoảng 3 giờ mỗi run.
-
-     | | val tốt nhất | tốt nhất (chỉ cuối epoch) | epoch 20 | `wa` cuối |
-     |---|---|---|---|---|
-     | `baseline` | 0.685 @4.5 | 0.681 @5 | 0.640 | 0.0095 |
-     | `full` | 0.682 @2.5 | 0.674 @4 | 0.613 | 0.0106 |
-     | run cũ `baseline` (không aug, cùng val fold 2) | 0.715 @1 | | 0.685 | 0.0000 |
-     | run cũ `full` | 0.705 @1 | | 0.670 | |
-
-     **Kết luận:** đỉnh val đến muộn hơn và `wa` không còn về 0, nhưng đỉnh **thấp hơn run cũ khoảng 3 điểm**, và val vẫn tụt sau epoch 5. Chưa tách được nguyên nhân là augmentation mạnh hay EMA/LR; cần pilot `runs_aug1` (chỉ augmentation) để so. **Chưa giữ gói này.**
-   - **Phần tụt tập trung ở vài AU**, và giống nhau ở cả hai variant (`baseline` / `full`, so với run cũ):
-     - AU6: 0.42 / 0.42, run cũ 0.64 / 0.62 — tụt khoảng 20 điểm, riêng AU này đã kéo macro-F1 xuống khoảng 2.5 điểm;
-     - AU26: 0.43 / 0.47, run cũ 0.55 / 0.50;
-     - ngược lại AU4 tăng khoảng 7 điểm, AU12 tăng 5–10 điểm.
-     
-     Cell D2 kiểm xem AU6 tụt vì ngưỡng (lệch hiệu chỉnh) hay vì mất đặc trưng.
-   - **Đã merge vào `main` ngày 21/11 (`586b221`)**, vì không còn run nào đang chạy. Hash các file bị hash trên `main` khớp với config của `runs_aug2`. Nhánh `stage1-ema-valchecks` giờ không cần dùng nữa; Setup để `BRANCH = 'main'`.
+5. **Gói EMA + val 4 lần/epoch + LR backbone 0.1×** (code trên `main` từ `586b221`, cờ mặc định tắt): **không có bằng chứng có lợi, đề xuất không đưa vào cấu hình chính.** EMA và LR chưa tách được.
+   - D2 (22/11): C0 khớp lúc train (68.53 / 68.16); C1 72.27 / 72.00 (tune trên chính val); `R0 − C0` = +0.26 / +0.04.
+   - AU6 không cứu được bằng ngưỡng chung (42.1 → 42.2 / 41.7 → 45.5), và bị dự đoán **thừa** 1.5–1.65 lần. Chưa chứng minh "mất đặc trưng do aug".
+   - Đính chính 21/11: mức "AU6 tụt 20 điểm" là so với epoch đẹp nhất của run cũ (AU6 run cũ dao động 32.5–63.8 theo epoch); so trung vị thì 10.6 / 11.9 điểm.
 6. Tuỳ chọn, cho Q2b: Stage 2/3 của SymGraphAU trong `MultiviewSymAU-master/` (đồ thị CNF + GCN) còn lỗi sigmoid hai lần và mất dấu phủ định. Đây không phải phương pháp chính; nếu không kịp thì Q2b trả lời bằng lập luận (đề cương §1).
+7. **CHỜ CHỦ DỰ ÁN QUYẾT (22/11) — rò rỉ khi chọn cấu hình chung trên val:** inner val của fold này là outer test của fold khác.
+   - Val fold 2: SN008 (test fold 1), SN016 và SN032 (test fold 3). Gộp val 3 fold thì chạm 2/9, 2/9, 3/9 subject test của fold 1, 2, 3.
+   - Vì vậy **không chọn aug/EMA/LR/variant trên val fold 2 (hay val gộp) rồi áp cho mọi fold**. Chọn checkpoint, ngưỡng, λ riêng trong từng fold thì không dính lỗi này.
+   - (A, đề xuất) khoá cấu hình pilot vì đã định trước từ 13/11, chạy nốt 16 run (~40 giờ L4), công bố việc pilot trượt 1 tiêu chí. (B) tune lồng: mỗi fold tự chọn trên val của nó (2 ứng viên ~85 giờ).
+   - Chưa quyết thì chưa chạy thêm thí nghiệm tune và chưa mở test.

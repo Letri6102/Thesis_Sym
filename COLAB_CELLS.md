@@ -257,7 +257,7 @@ Pilot đạt khi (đề cương §5, §7):
 - val F1 đạt đỉnh **sau** epoch 2;
 - val F1 tốt nhất **không thấp hơn** run cũ (0.715 cho baseline, 0.705 cho full).
 
-Nếu F1 của các AU nhỏ (AU1/2/9/26) tụt thì thử bỏ `RandomErasing`.
+**Kết quả 22/11: trượt tiêu chí thứ hai** (đỉnh ở epoch 1). Không chỉnh augmentation theo val fold 2 rồi áp cho mọi fold: 3 subject này là test của fold 1/3 (CLAUDE.md §7).
 
 ```python
 import json
@@ -324,9 +324,10 @@ for v in VARIANTS:
 - tốt nhất trên mọi lần đánh giá: đây là checkpoint thật sự được dùng;
 - tốt nhất chỉ trên các lần đánh giá cuối epoch: dùng để so ngang hàng với pilot.
 
-Quy tắc giữ gói thay đổi:
-- Giữ nếu con số "cuối epoch" của `runs_aug2` **không thấp hơn** pilot.
-- Chỉ gọi là "tốt hơn" khi hơn rõ, cỡ 0.5 điểm trở lên. Một fold và một seed không đủ để phân biệt mức chênh nhỏ hơn.
+**Chỉ để mô tả, không dùng để chọn cấu hình** (đính chính 22/11):
+- mốc "hơn 0.5 điểm" trước đây là sai: riêng pilot `baseline` nhảy tới 10 điểm giữa hai epoch liền nhau;
+- EMA làm mượt đường val, nên so max với run không EMA là thiệt cho EMA;
+- val fold 2 gồm subject test của fold 1/3.
 
 Cell này chỉ đọc file JSON, nên chạy được ở bất kỳ phiên nào, kể cả phiên CPU và không cần Setup. Pilot chưa xong cũng chạy được: cell in số epoch đã có và điểm tốt nhất tính tới lúc đó.
 
@@ -393,8 +394,7 @@ run_logged([sys.executable, '-u', '-m', 'stage2_decoder.run_all', '--runs', RUNS
 | AU12 | 0.83 / 0.78 | 0.73 / 0.73 | +10 / +5 |
 
 Cell này `evaluate` val cho 2 run, rồi decode **chỉ trên val**. C1 là F1 sau khi chỉnh ngưỡng riêng cho từng AU.
-- **AU6 ở C1 hồi lại khoảng 0.6 với ngưỡng thấp hơn hẳn 0.5:** mô hình vẫn phân biệt được AU6 nhưng **lệch hiệu chỉnh** (xác suất dồn xuống dưới 0.5).
-- **AU6 ở C1 vẫn quanh 0.45:** đặc trưng của AU6 đã mất. Nghi ngờ blur, grayscale và color jitter mạnh xoá nếp nhăn đuôi mắt, đúng thứ AU6 dựa vào [suy luận].
+**Kết quả 22/11:** AU6 ở C1 là 42.2 / 45.5, tức không cứu được bằng một ngưỡng chung. Điều này **chưa** chứng minh mất đặc trưng do augmentation: cũng có thể do lệch giữa subject. Cột "run cũ" ở bảng trên là epoch đẹp nhất, nên mức chênh bị phóng đại.
 
 Mốc so sánh từ run cũ `baseline` fold 2 (cell E): C0 71.5 → C1 73.0; AU6 63.8 → 66.9 (ngưỡng 0.38); AU26 54.6 → 60.6.
 
