@@ -8,6 +8,7 @@ data/
 /runs/
 /runs_retry1/
 /runs_*/
+/pc_runs/
 /splits_v2/
 /stage2_*/
 /DISFA_img/

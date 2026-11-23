@@ -653,6 +653,7 @@ Có sẵn dạng notebook kèm Setup: [notebooks/Train_18_run.ipynb](notebooks/T
 - **Chạy lại là tiếp tục:** run xong thì bỏ qua, run dở thì resume. Run bị ngắt trong epoch 1 được cất sang `failed_runs/` rồi train lại (cell B không xử lý được ca này).
 - **Chặn:** run vừa được ghi dưới 15 phút (có thể phiên khác đang train), Drive trống dưới 12 GB.
 - Không evaluate test.
+- **Có máy GPU riêng (pc/README.md) thì phân công theo seed**: mặc định máy riêng lấy seed 2, Colab đặt `SEEDS = [0, 1]`. Hai máy không thấy tiến độ của nhau.
 
 ```python
 # ==== Cell G: cấu hình KHOÁ 22/11 — train cho đủ 18 run trong runs_aug1 (2 pilot đã xong + 16). KHÔNG đụng test ====
@@ -775,6 +776,81 @@ Lệnh tính CI thật (`--output`) **không** nằm ở đây: nó thuộc cell
 
 ```python
 run_logged([sys.executable, '-u', '-m', 'stage2_decoder.contrast_ci', '--runs', RUNS, '--check-only'], 'contrast_ci_check')
+```
+
+---
+
+## I. Nhập run train trên máy GPU riêng — CPU, chạy sau Setup (`IMAGES = False`)
+
+Có sẵn dạng notebook kèm Setup: [notebooks/Nhap_run_PC.ipynb](notebooks/Nhap_run_PC.ipynb). Máy riêng chạy `pc/train_18_run.py` và tạo `aug1_<variant>_fold<k>_seed<s>.zip`; tải các zip này lên `MyDrive/Sym/upload/`.
+- Kiểm khoá từng run (config, hash code, thư viện, manifest, đủ 20 epoch, có `best.pt` và `last.pt`), rồi chép vào `runs_aug1/`.
+- **Không ghi đè** run đã đủ 20 epoch trên Drive. Không đụng run vừa được ghi dưới 15 phút (Colab có thể đang train).
+- Zip đã xử lý được chuyển sang `upload/done/`, `upload/duplicate/` hoặc `upload/rejected/`. Chạy lại cell là xử lý tiếp phần còn lại.
+
+```python
+# ==== Cell I: nhập run train trên máy GPU riêng (MyDrive/Sym/upload/aug1_*.zip) vào runs_aug1 — kiểm khoá, không ghi đè ====
+import re, zipfile
+sys.path.insert(0, str(CODE))
+from stage2_decoder.contrast_ci import LOCK, run_problems
+
+UP, BUSY_MIN, EPOCHS = SYM / 'upload', 15, 20
+assert RUNS.name == 'runs_aug1', f'RUNS phải là runs_aug1, đang là {RUNS}'
+
+def ok(run, v, k, s):
+    return not run_problems(run, v, k, s, LOCK) and (run / 'last.pt').exists()
+
+def park(z, sub):
+    (UP / sub).mkdir(parents=True, exist_ok=True)
+    shutil.move(str(z), str(UP / sub / z.name))
+
+zips = sorted(UP.glob('aug1_*.zip'))
+print(f'{len(zips)} zip chờ nhập trong {UP}', flush=True)
+for z in zips:
+    m = re.fullmatch(r'aug1_(baseline|full)_fold([123])_seed([012])', z.stem)
+    if not m:
+        print(f'  {z.name}: tên lạ, bỏ qua'); continue
+    v, k, s = m[1], int(m[2]), int(m[3])
+    target, prefix = RUNS / v / f'fold{k}' / f'seed{s}', f'{v}/fold{k}/seed{s}/'
+    work = Path('/content/pc_import') / z.stem
+    shutil.rmtree(work, ignore_errors=True)
+    work.mkdir(parents=True)
+    subprocess.run(['cp', str(z), str(work / 'run.zip')], check=True, timeout=1800)     # đọc Drive có timeout
+    with zipfile.ZipFile(work / 'run.zip') as f:
+        names = f.namelist()
+        if any(not n.startswith(prefix) or '..' in n.split('/') for n in names):
+            print(f'  {z.name}: zip chứa đường dẫn lạ → KHÔNG nhập'); park(z, 'rejected'); continue
+        f.extractall(work / 'x')
+    run = work / 'x' / v / f'fold{k}' / f'seed{s}'
+    if not ok(run, v, k, s):
+        print(f'  {z.name}: lệch khoá hoặc chưa xong {run_problems(run, v, k, s, LOCK)} → KHÔNG nhập')
+        park(z, 'rejected'); continue
+    gpu = json.loads((run / 'environment.json').read_text()).get('gpu')
+    if (target / 'config.json').exists():
+        if ok(target, v, k, s):
+            print(f'  {z.name}: Drive đã có run này đủ {EPOCHS} epoch → giữ bản Drive, không ghi đè')
+            park(z, 'duplicate'); continue
+        files = [p for p in target.rglob('*') if p.is_file()]
+        age = (time.time() - max(p.stat().st_mtime for p in files)) / 60 if files else 1e9
+        if age < BUSY_MIN:
+            print(f'  {z.name}: run này vừa được ghi {age:.0f} phút trước (Colab có thể đang train) → để lại, chạy lại cell sau')
+            continue
+        dest = SYM / 'failed_runs' / f'aug1_{v}_fold{k}_seed{s}_{time.strftime("%Y%m%d_%H%M%S")}_truoc_nhap'
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(target), str(dest))
+        print(f'  bản dở trên Drive → failed_runs/{dest.name}')
+    partial = target.with_name(target.name + '.partial')
+    shutil.rmtree(partial, ignore_errors=True)
+    partial.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(['cp', '-r', str(run), str(partial)], check=True, timeout=3600)
+    partial.rename(target)
+    assert ok(target, v, k, s), f'{z.name}: sau khi chép lên Drive lại lệch, gửi Claude xem'
+    park(z, 'done')
+    shutil.rmtree(work)
+    print(f'  {z.name}: ĐÃ NHẬP (GPU {gpu})', flush=True)
+
+done = sum(ok(RUNS / v / f'fold{k}' / f'seed{s}', v, k, s) for v in ('baseline', 'full') for k in (1, 2, 3) for s in (0, 1, 2))
+print(f'\nruns_aug1 hiện có {done}/18 run đủ {EPOCHS} epoch đúng khoá. Đang chờ Drive đồng bộ...', flush=True)
+drive.flush_and_unmount()
 ```
 
 ---

@@ -12,6 +12,7 @@ Mỗi backbone phải so với số của chính backbone đó.
 ## 1. Quy tắc bắt buộc (quyết định của chủ dự án, 20/11/2026)
 
 - **Không train, evaluate hay chạy Tầng 2 ở máy local.** Mọi thứ đụng tới dataset hoặc GPU đều chạy trên **Google Colab** qua notebook.
+  - **Ngoại lệ (chủ dự án mở 23/11):** được **train** run của bộ 18 run trên máy GPU riêng (RTX 5090, remote), chỉ bằng `pc/train_18_run.py` (hướng dẫn `pc/README.md`), cùng khoá. Kết quả nhập vào Drive bằng cell I. Evaluate, Tầng 2 và mở test vẫn chỉ trên Colab. Máy dev hiện tại (RTX 5060 Ti) không phải máy train.
 - **Mọi code đều phải commit và push lên GitHub** (`Letri6102/Thesis_Sym`, nhánh `main`). Notebook Colab lấy code từ git, **không** đọc code từ Drive.
 - **Dataset và kết quả chạy vẫn nằm trên Google Drive** (`MyDrive/Sym`) như cũ. Không đưa data, trọng số hay kết quả lên git.
 - Ở local chỉ được: sửa code, chạy unit test nhẹ (`Contrastive_V1/.venv-tests`, `pytest tests`), đọc log và kết quả đã kéo từ Drive về để phân tích.
@@ -63,6 +64,7 @@ stage2_v2/                   Tầng 2 chuẩn (stage2_decoder): rules/fold{k}/, 
 contrast_ci/summary.json     CI full − baseline trên test (stage2_decoder/contrast_ci.py) — chỉ tạo một lần, khi mở test
 stage2_out/                  Tầng 2 bản notebook 13/11 trên detector cũ — chỉ là thăm dò
 stage2_smoke_retry1/         cell E: chạy thử stage2_decoder trên runs_retry1 + splits cũ, CHỈ VAL — kiểm module, không báo cáo
+upload/                      zip run train trên máy riêng chờ cell I nhập; đã xử lý → upload/done|duplicate|rejected/
 failed_runs/, logs/, reports/
 Contrastive_V1/checkpoints/resnet50-19c8e357.pth   trọng số ImageNet
 ```
@@ -75,7 +77,8 @@ Contrastive_V1/remote_stage2/ script cho máy remote (runs_retry1, splits cũ) �
 MultiviewSymAU-master/       bản cài đặt lại SymGraphAU (Stage 2/3 cũ) để đối chiếu
 Tang2_Decoder.ipynb          Tầng 2 bản notebook 13/11 — LỖI THỜI, lệch đề cương; dùng stage2_decoder
 De_cuong_nghien_cuu.md       đề cương bản 2
-notebooks/                   Train_18_run.ipynb (Setup + cell G) và Bao_cao_log.ipynb (cell F) — bản đang dùng
+notebooks/                   Train_18_run.ipynb (Setup + cell G), Nhap_run_PC.ipynb (Setup + cell I), Bao_cao_log.ipynb (cell F) — bản đang dùng
+pc/                          train trên máy GPU riêng: setup_env.py, train_18_run.py (prepare/check/smoke/train/status), README.md
 CONTEXT.md                   baseline SymGraphAU (paper), số cần vượt, đối chiếu pipeline, hướng cải tiến
 ```
 
@@ -105,7 +108,8 @@ Quy tắc cho mọi cell:
   - ResNet-50, aug mạnh, lr 1e-4, wd 5e-4, 20 epoch, batch 32, workers 4; không EMA, val 1 lần/epoch, LR backbone ×1.
   - Chỉ `baseline` và `full`; 3 fold × seed 0/1/2 = 18 run, train bằng cell G (cell tự kiểm khoá code, manifest, thư viện).
   - **Không sửa hay push file bị hash, không tune, không thêm variant cho tới khi đủ 18 run.**
-  - Phải công bố trong luận văn: pilot trượt tiêu chí "đỉnh sau epoch 2"; việc khoá diễn ra sau khi đã nhìn val fold 2 (chứa subject test của fold 1/3); aug được chọn 13/11, sau lần mở test thăm dò 29/10.
+  - Phân công 23/11: máy RTX 5090 train **seed 2**, Colab train seed 0 và 1 (cell G với `SEEDS = [0, 1]`). Hai variant của cùng một seed phải train trên cùng một máy.
+  - Phải công bố trong luận văn: seed 2 train trên RTX 5090, seed 0/1 trên L4; pilot trượt tiêu chí "đỉnh sau epoch 2"; việc khoá diễn ra sau khi đã nhìn val fold 2 (chứa subject test của fold 1/3); aug được chọn 13/11, sau lần mở test thăm dò 29/10.
 - Khi theo dõi loss, đọc các cột thô `global_con`/`node_con`/`cross_con` trong `history.json`. Không đọc `total`, vì cột này có nhân hệ số ramp.
 
 ## 7. Việc đang mở (cập nhật 22/11/2026)
@@ -125,7 +129,7 @@ Quy tắc cho mọi cell:
 
    - Dấu của `pilot − cũ`, `B2 − pilot`, `full − baseline` **đổi theo cách đo và theo variant**. 1 fold + 1 seed không xếp hạng được cấu hình; không gọi chênh vài điểm là cải thiện.
    - Val fold 2 (3 subject) **không so được** với 63.0 của paper (test, 3 fold).
-3. **ĐANG LÀM: train nốt 16 run** (cell G, `notebooks/Train_18_run.ipynb`, khoảng 40 giờ L4). Đủ 18 run thì chạy Tầng 2 chỉ val (cell D, 3 fold × 3 seed).
+3. **ĐANG LÀM: train nốt 16 run.** Colab chạy seed 0/1 (cell G, `notebooks/Train_18_run.ipynb`); máy 5090 chạy seed 2 (`pc/train_18_run.py`; chưa chạy smoke trên máy đó), nhập về Drive bằng cell I. Đủ 18 run thì chạy Tầng 2 chỉ val (cell D, 3 fold × 3 seed).
 4. ~~Cell E~~ **XONG 21/11**: `stage2_decoder` chạy đúng trên 6 run cũ, chỉ val, mất khoảng 30 giây. Kết quả tóm tắt nằm ở đề cương §6 và không dùng để báo cáo. Trên val, `R0 − C0` chỉ từ +0.0 đến +0.9, trong khi C1 − C0 từ +1.5 đến +10.6.
 5. **Gói EMA + val 4 lần/epoch + LR backbone 0.1×** (code trên `main` từ `586b221`, cờ mặc định tắt): **không có bằng chứng có lợi, đề xuất không đưa vào cấu hình chính.** EMA và LR chưa tách được.
    - D2 (22/11): C0 khớp lúc train (68.53 / 68.16); C1 72.27 / 72.00 (tune trên chính val); `R0 − C0` = +0.26 / +0.04.
@@ -139,4 +143,4 @@ Quy tắc cho mọi cell:
    - đủ 18 run;
    - ~~code CI cho `full − baseline`~~ **XONG 22/11**: `stage2_decoder/contrast_ci.py` (test: `tests/test_contrast_ci.py`). Không đọc file test nào nếu chưa đủ 18 run đúng khoá; `--check-only` (cell H) không bao giờ đọc test. Test `test_lock_matches_code_and_cell_g` đỏ nghĩa là file bị hash đã đổi: không push.
    - chốt và cài dòng (b) refit (chưa có code), hoặc chính thức bỏ. Chỉ dòng (b) được đặt cạnh 63.0, nên phải xong trước lần mở test duy nhất.
-   - **CHỜ QUYẾT (22/11), phải chốt trước khi nhìn kết quả các seed:** quy tắc §6 không tính nhiễu giữa các lần train. Đề xuất thêm điều kiện "Δ > 0 ở cả 3 seed" (số mô phỏng ở đề cương §6). Chưa chốt thì code giữ nguyên quy tắc §6; Claude không tự đổi.
+   - ~~quy tắc 3 seed~~ **ĐÃ CHỐT 22/11 (chủ dự án), trước khi mở test:** `full − baseline` chỉ ĐẠT khi thêm "Δ > 0 ở cả 3 seed" (`contrast_ci.contrast_verdict`; lý do: `stage2_decoder/sim_contrast_rule.py`, đề cương §6). `R0 − C0` giữ quy tắc cũ.
