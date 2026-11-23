@@ -30,6 +30,27 @@ def sh(cmd):
     subprocess.run([str(c) for c in cmd], check=True, cwd=ROOT)
 
 
+def is_current(result, run):
+    """Kết quả decode cũ chỉ được giữ khi nó làm từ đúng checkpoint của run hiện tại. 23/11: runs_aug1 được thay
+    bằng bộ train trên 5090, nên kết quả decode làm từ pilot Colab cùng tên fold/seed phải bị làm lại."""
+    try:
+        old = json.loads(Path(result).read_text(encoding="utf-8"))["checkpoint_hash"]
+        now = json.loads((prediction_dir(run, "val") / "val_metrics.json").read_text(encoding="utf-8"))["checkpoint_hash"]
+    except (OSError, ValueError, KeyError):
+        return False
+    return old == now
+
+
+def set_aside(result_dir, res_root):
+    """Không xoá kết quả cũ: chuyển sang <output>/stale/<thời điểm>/... rồi decode lại."""
+    import shutil
+    import time
+    dest = Path(res_root).parent / "stale" / time.strftime("%Y%m%d_%H%M%S") / Path(result_dir).relative_to(res_root)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(result_dir), str(dest))
+    print(f"Kết quả cũ làm từ checkpoint khác → {dest}", flush=True)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--runs", required=True)
@@ -77,8 +98,11 @@ def main(argv=None):
                         "--data-root", data, "--manifest", splits / f"fold{k}.json",
                         "--output", run / EVAL_DIRS[split][0],
                         "--batch-size", args.batch_size, "--workers", args.workers])
-                if (res_root / v / f"fold{k}" / f"seed{s}" / result_file).exists():
-                    continue
+                res_dir = res_root / v / f"fold{k}" / f"seed{s}"
+                if (res_dir / result_file).exists():
+                    if is_current(res_dir / result_file, run):
+                        continue
+                    set_aside(res_dir, res_root)
                 sh([py, "-m", "stage2_decoder.decode", "--run", run, "--rules", rules_root / f"fold{k}",
                     "--manifest", splits / f"fold{k}.json", "--data-root", data, "--output", res_root]
                    + (["--val-only"] if args.val_only else []))

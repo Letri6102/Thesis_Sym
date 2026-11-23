@@ -154,6 +154,19 @@ Quy tắc cho mọi cell:
      - Đỉnh val rơi vào epoch 3–5 (pilot: epoch 1), nên E của refit là 5, 5, 4, 3. Tiêu chí "đỉnh sau epoch 2, `wa` không về 1e-05" đạt ở cả 4 run, trong khi chính cấu hình đó trượt ở pilot: tiêu chí này nhạy với nhiễu. Sau đỉnh, val vẫn giảm 1–10 điểm tới epoch 20.
      - AU6 thấp nhất ở checkpoint được chọn (36–56).
      - Fold 1 không so được với `runs_retry1`, vì val fold 1 đã đổi khi chuyển sang `splits_v2`.
+     - **Vì sao fold 2 trên 5090 thấp hơn pilot ở điểm tốt nhất (giải thích 23/11)?**
+       - Không phải do fold: list, manifest `splits_v2` và ảnh đều trùng từng byte; val fold 2 trên cả hai máy là SN008, SN016, SN032.
+       - Không phải do trọng số ImageNet: cùng file `19c8e357`, và loss train trùng tới 4 chữ số (`wa` epoch 1 của baseline là 0.0591 trên cả hai máy).
+       - Phần khác nhau là ngẫu nhiên: head khởi tạo trên CPU, luồng aug của worker Windows và Linux, phép tính trên L4 và 5090.
+       - Val chỉ 3 subject nên khuếch đại mạnh phần ngẫu nhiên này. Trong cùng một run, val nhảy tới khoảng 9 điểm giữa hai epoch liền nhau (pilot baseline: 76.8 → 67.7 → 71.2 → 74.0 → 64.2), nên "tốt nhất trong 20 epoch" phần lớn là bắt được một đỉnh nhọn.
+       - Cuối quá trình train, baseline gần trùng pilot: TB 11–20 là 61.2 so với 62.4, epoch 20 là 60.3 so với 60.5.
+       - Một cặp run không tách được hiệu ứng máy với hiệu ứng seed. Không cần tách, vì cả 18 run train trên cùng một máy.
+       - Chưa loại trừ hẳn một hiệu ứng máy nhỏ có hệ thống (ví dụ RNG của worker trên Windows). Không đo, vì không quyết định nào phụ thuộc vào nó.
+     - **Còn lại (23/11):**
+       - 14 run (a): seed 0 fold 3, seed 1, seed 2; khoảng 1 giờ/run.
+       - 18 run refit: mỗi run dừng ở epoch E đã chọn, khoảng 10–20 phút/run.
+       - Colab không train nữa. Việc của Colab: nhập zip (cell I), kiểm đủ khoá (cell H), cell D chỉ val (evaluate val rồi Tầng 2), sau đó là cell mở test (chưa viết).
+       - `stage2_decoder.run_all` tự cất kết quả decode làm từ checkpoint khác (ví dụ của pilot) sang `stage2_v2/stale/` rồi decode lại.
 4. ~~Cell E~~ **XONG 21/11**: `stage2_decoder` chạy đúng trên 6 run cũ, chỉ val, mất khoảng 30 giây. Kết quả tóm tắt nằm ở đề cương §6 và không dùng để báo cáo. Trên val, `R0 − C0` chỉ từ +0.0 đến +0.9, trong khi C1 − C0 từ +1.5 đến +10.6.
 5. **Gói EMA + val 4 lần/epoch + LR backbone 0.1×** (code trên `main` từ `586b221`, cờ mặc định tắt): **không có bằng chứng có lợi, đề xuất không đưa vào cấu hình chính.** EMA và LR chưa tách được.
    - D2 (22/11): C0 khớp lúc train (68.53 / 68.16); C1 72.27 / 72.00 (tune trên chính val); `R0 − C0` = +0.26 / +0.04.

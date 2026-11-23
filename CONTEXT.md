@@ -121,6 +121,8 @@ Trên BP4D (ngoài phạm vi luận văn): 65.3 với ResNet-50, 64.8 với Swin
 
   Fold 2 chạy lại pilot trên máy khác: loss train gần trùng, nhưng val lệch tới khoảng 5 điểm. Đó là mức nhiễu của val 3 subject giữa hai run đơn lẻ, nên chỉ CI 3 fold × 3 seed mới trả lời được `full − baseline`. Chi tiết ở CLAUDE.md §7.
 
+  Điểm tốt nhất trên 5090 thấp hơn pilot, nhưng **không do fold và không do trọng số**: list, manifest, ảnh và file trọng số đều trùng, loss train trùng. Phần khác nhau là ngẫu nhiên (head khởi tạo, aug, GPU), bị val 3 subject khuếch đại; trong cùng một run, val nhảy tới khoảng 9 điểm giữa hai epoch. Cuối quá trình train, baseline gần trùng pilot (60.3 so với 60.5 ở epoch 20).
+
 ---
 
 ## 5. Điểm của paper dùng được trong phần lập luận

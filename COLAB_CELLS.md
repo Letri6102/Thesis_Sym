@@ -367,7 +367,7 @@ Dùng module `stage2_decoder`, không dùng notebook `Tang2_Decoder.ipynb` nữa
 2. chạy `evaluate --split val` với `best.pt`, ghi vào `<run>/evaluation_val/`;
 3. decode các nhánh C0/C1/R0/R1/R_FACS **chỉ trên val**.
 
-**Không đụng outer test.** Kết quả ghi vào `MyDrive/Sym/stage2_v2/`. Chạy lại an toàn: bước nào đã có kết quả thì bỏ qua.
+**Không đụng outer test.** Kết quả ghi vào `MyDrive/Sym/stage2_v2/`. Chạy lại an toàn: bước nào đã có kết quả thì bỏ qua. Riêng kết quả decode làm từ checkpoint khác thì không được giữ, chẳng hạn kết quả của pilot Colab trước khi `runs_aug1` được thay bằng run 5090 (23/11). Kết quả đó bị chuyển sang `stage2_v2/stale/` rồi decode lại.
 Lưu ý: điểm val ở đây có λ và ngưỡng được chọn trên chính val, nên chỉ dùng để xem chiều hướng, **không** dùng để báo cáo.
 
 ```python
