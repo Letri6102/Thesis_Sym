@@ -420,3 +420,101 @@ def test_cell_j_checks_exactly_the_recorded_bundle():
     ns = {}
     exec("EXPECT = " + cell.split("EXPECT = ", 1)[1].split("\n}\n", 1)[0] + "\n}", ns)
     assert ns["EXPECT"] == {s: (d["size"], d["sha256"]) for s, d in rec["tars"].items()} and len(rec["tars"]) == 27
+
+
+# ---------------------------------------------------------------- dữ liệu có sẵn trên máy GPU (thư mục của Khang)
+def khang_layout(tmp, root):
+    """Thư mục 'chia fold sẵn': ảnh lặp lại trong từng fold, list để ở chỗ khác, có trọng số."""
+    src = tmp / "KLTN_Khang" / "DISFA_Data"
+    for k in (1, 2, 3):
+        for part in ("train", "test"):
+            for name in (root / "list" / f"DISFA_{part}_img_path_fold{k}.txt").read_text().split():
+                dst = src / f"fold{k}" / part / name
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(root / "img" / name, dst)
+    shutil.copytree(root / "list", src / "labels" / "list_ok")
+    (src / "weights").mkdir()
+    (src / "weights" / "resnet50-19c8e357.pth").write_bytes(b"weights")
+    return src
+
+
+def folder_args(tmp, root):
+    from experiment_data import make_manifest
+    splits = lambda data: {k: make_manifest(data, k, val_subject_count=1, check_images=False) for k in (1, 2, 3)}
+    lock = dict(CI.LOCK, manifests={k: sha(json.dumps(m, indent=2).encode()) for k, m in splits(root).items()})
+    names = [f"DISFA_{p}_{t}_fold{k}.txt" for p in ("train", "test") for t in ("img_path", "label") for k in (1, 2, 3)]
+    ref = dict(lists={n: sha((root / "list" / n).read_bytes()) for n in names})
+    subj = sorted(p.name for p in (root / "img").iterdir())
+    tars = {}
+    for s in subj:
+        size, digest = PC.tar_digest(root / "img", sorted(f"{s}/{p.name}" for p in (root / "img" / s).iterdir()))
+        tars[s] = dict(size=size, sha256=digest)
+    return dict(lock=lock, ref=ref, tars=tars, n_images=18, make_splits=splits,
+                weight=tmp / "ckpt" / "resnet50-19c8e357.pth", weight_prefix=sha(b"weights")[:8])
+
+
+def test_reference_files_shipped_with_repo():
+    assert len(PC.REFERENCE["lists"]) == 12 and PC.REFERENCE["n_images"] == 130814 and len(PC.TARS) == 27
+
+
+def test_tar_digest_equals_the_bundle_tar(tmp_path):
+    root, _ = small_dataset(tmp_path)
+    names = ["SN002/0.png", "SN002/1.png", "SN002/2.png"]
+    MB.write_tar(tmp_path / "x.tar", root / "img", names)
+    assert PC.tar_digest(root / "img", names) == ((tmp_path / "x.tar").stat().st_size, sha((tmp_path / "x.tar").read_bytes()))
+
+
+def test_from_folder_uses_fold_split_data_read_only(tmp_path):
+    root, _ = small_dataset(tmp_path)
+    src = khang_layout(tmp_path, root)
+    before = {p: (p.stat().st_mtime_ns, p.read_bytes()) for p in src.rglob("*") if p.is_file()}
+    kw = folder_args(tmp_path, root)
+    with redirect_stdout(io.StringIO()) as out:
+        PC.from_folder(src, tmp_path / "DISFA", **kw)
+    data = tmp_path / "DISFA"
+    for p in (root / "img").rglob("*.png"):
+        assert (data / "img" / p.relative_to(root / "img")).read_bytes() == p.read_bytes()
+    assert out.getvalue().count("KHỚP") == 6 and (data / ".img_ok").exists()
+    assert all(sha((data / "splits_v2" / f"fold{k}.json").read_bytes()) == kw["lock"]["manifests"][k] for k in (1, 2, 3))
+    assert b"\r" not in (data / "splits_v2" / "fold1.json").read_bytes()
+    assert kw["weight"].read_bytes() == b"weights"
+    assert {p: (p.stat().st_mtime_ns, p.read_bytes()) for p in src.rglob("*") if p.is_file()} == before   # chỉ đọc
+    with redirect_stdout(io.StringIO()) as again:
+        PC.from_folder(src, data, **kw)
+    assert "bỏ qua" in again.getvalue()
+
+
+def test_from_folder_stops_on_different_images(tmp_path):
+    root, _ = small_dataset(tmp_path)
+    src = khang_layout(tmp_path, root)
+    for p in src.rglob("SN004/1.png"):
+        p.write_bytes(b"crop khac")
+    with pytest.raises(SystemExit, match=r"KHÁC bản chuẩn ở \['SN004'\]"), redirect_stdout(io.StringIO()):
+        PC.from_folder(src, tmp_path / "DISFA", **folder_args(tmp_path, root))
+    assert not (tmp_path / "DISFA" / ".img_ok").exists()
+
+
+def test_from_folder_lists_fallback_and_weight_download(tmp_path):
+    root, _ = small_dataset(tmp_path)
+    src = khang_layout(tmp_path, root)
+    shutil.rmtree(src / "labels")
+    (src / "weights" / "resnet50-19c8e357.pth").unlink()
+    for k in (1, 2, 3):                                    # list "chia fold" riêng của Khang, khác bản chuẩn
+        (src / f"fold{k}" / f"DISFA_train_label_fold{k}.txt").write_text("0 0 0 0 0 0 0 0")
+    kw = folder_args(tmp_path, root)
+    with pytest.raises(SystemExit, match="--lists"), redirect_stdout(io.StringIO()):
+        PC.from_folder(src, tmp_path / "DISFA", **kw)
+    got = []
+    kw["fetch"] = lambda url, dest: (got.append(url), Path(dest).write_bytes(b"weights"))
+    with redirect_stdout(io.StringIO()):
+        PC.from_folder(src, tmp_path / "DISFA", lists_dir=root / "list", **kw)
+    assert got == [PC.WEIGHT_URL] and (tmp_path / "DISFA" / ".img_ok").exists()
+
+
+def test_one_file_runner_bat():
+    b = (REPO / "pc" / "windows" / "train_data_co_san.bat").read_bytes()
+    assert b.isascii() and b.count(b"\n") == b.count(b"\r\n") > 30
+    t = b.decode()
+    for step in (r'set "SRC=D:\KLTN_Khang\DISFA_Data"', "setup_env.py", "from-folder --src", "check --data",
+                 "smoke --data", "train --data", r'"%REPO%\..")'):
+        assert step in t, step

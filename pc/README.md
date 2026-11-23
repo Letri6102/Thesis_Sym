@@ -2,6 +2,28 @@
 
 Máy này chỉ **train** một phần của bộ 18 run, với đúng cấu hình đã khoá ngày 22/11 (CLAUDE.md §6). Evaluate, Tầng 2 và mở test vẫn làm trên Colab. Mọi bước đều kiểm khoá: code, phiên bản thư viện, manifest, trọng số, ảnh. Lệch một thứ là dừng, không train.
 
+## Máy GPU đã có sẵn dữ liệu DISFA (ví dụ `D:\KLTN_Khang\DISFA_Data`) — cách nhanh nhất, 23/11
+
+Không cần chép gói 8 GB. Dữ liệu có sẵn chỉ được **đọc**, và phải trùng từng byte với bản chuẩn thì mới train.
+
+```bat
+cd /d D:\LVTS_TriLe
+git clone https://github.com/Letri6102/Thesis_Sym.git
+D:\LVTS_TriLe\Thesis_Sym\pc\windows\train_data_co_san.bat
+```
+
+- **Lần chạy đầu:** dò Python và cài môi trường. Sau đó lệnh `from-folder` làm các việc sau:
+  - tìm 12 file list và đối chiếu với mã băm chuẩn ở `pc/data_reference.json`;
+  - tạo lại `splits_v2`, trùng từng byte với bản đã khoá;
+  - chép ảnh vào `D:\LVTS_TriLe\DISFA`;
+  - kiểm từng subject bằng SHA-256 tar trong `pc/bundle_tar_sha256.json`.
+
+  Cuối cùng chạy `check` và chạy thử 1 epoch.
+- **Lần chạy thứ hai trở đi:** train seed 2. Bị ngắt thì chạy lại file này để tiếp tục.
+- **List của nguồn khác bản chuẩn:** chép 12 file `DISFA\list` từ máy cá nhân vào `D:\LVTS_TriLe\list`, rồi bỏ chữ `rem` ở dòng `LISTS` trong file `.bat`.
+- **Ảnh khác bản chuẩn:** file dừng ở subject đầu tiên bị lệch và không đánh dấu dữ liệu, nên không train được. Khi đó dùng gói `LVTS_TriLe` ở mục dưới.
+- **Mã băm chuẩn lấy từ ảnh ở máy cá nhân.** Muốn chắc chắn trùng bản trên Drive thì chạy thêm cell J (`Nhap_run_PC.ipynb`).
+
 ## Máy Windows chỉ được dùng một thư mục (D:\LVTS_TriLe, UltraViewer) — cách đang dùng 23/11
 
 1. **Ở máy cá nhân**, dựng gói (đã dựng sẵn tại `C:\CODE\Symbolic\LVTS_TriLe`):

@@ -1,0 +1,18 @@
+{
+ "note": "SHA-256 của list mà splits_v2 (khoá 22/11) ghi trong input_hashes; chỉ mã băm, không phải dữ liệu",
+ "n_images": 130814,
+ "lists": {
+  "DISFA_test_img_path_fold1.txt": "2f0efaf1b2d87b92cfc2be893b885b9a6a8a246681cbaa8a3deafc07e957fe52",
+  "DISFA_test_img_path_fold2.txt": "ae6dcbbaab25a7bb25c9f15f65cee68589c8c929ba9a48330f7e099d80c356df",
+  "DISFA_test_img_path_fold3.txt": "f4176147f595e54e16641beb00cfca087ec2c8171fcf4fbf72d4a62b25d42985",
+  "DISFA_test_label_fold1.txt": "fa4701a471eab15fc9d12f69c319952f3c4fd02a85d8ca9ee45c686db903ab4c",
+  "DISFA_test_label_fold2.txt": "9c1a646ca76a5c78f8092c66f3f31e61116a64fc94ca7f55cbb5545acb80b1f8",
+  "DISFA_test_label_fold3.txt": "1f424e18d83fd90d18de8fd034edf59753010d90263a66e19947aa3de433d8d1",
+  "DISFA_train_img_path_fold1.txt": "68dfcc9b16def3c5684d21c7d6203f8dc3ba7eb7cc51d77c37152f51a740aa79",
+  "DISFA_train_img_path_fold2.txt": "36cd381eab614c2a4254110a44bfe49eed41daf4bc9eafef81b0f270ba3b3771",
+  "DISFA_train_img_path_fold3.txt": "18adaf2d8cdfd2a77f1be1ff27b78571f189c8b994eaab484fe083c2ffa91ab8",
+  "DISFA_train_label_fold1.txt": "af559fdb3347c3f0021a473d02c0cd2e1ecfc58b54e42fd0cb33c7337395bf66",
+  "DISFA_train_label_fold2.txt": "535b3a15b854e67249cae0384f476ace70a15c383aa41e5165d9666c22c088bb",
+  "DISFA_train_label_fold3.txt": "b357103189f1d9fab316ffadf6d37893fad64241d03e34e6725aa36af397ddfe"
+ }
+}

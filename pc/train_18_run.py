@@ -12,6 +12,7 @@ Không evaluate, không đụng test. File nằm ngoài Contrastive_V1/ nên kh�
 """
 import argparse
 import hashlib
+import io
 import json
 import os
 import re
@@ -36,6 +37,9 @@ PILOT_INIT = "a6121dc9b5a8f905ef056e6263f54260d3e2b429562da63331db16551a0195f3" 
 PILOT_FULL_EP1 = .749                                                                # val F1 epoch 1 của pilot full fold 2 seed 0
 MIN_FREE_GB, BUSY_MIN = 15, 15
 LIST_PATTERN = re.compile(r"DISFA_(train|test)_(img_path|label|weight)_fold[123]\.txt")
+REFERENCE = json.loads((ROOT / "pc" / "data_reference.json").read_text(encoding="utf-8"))          # mã băm 12 list
+TARS = json.loads((ROOT / "pc" / "bundle_tar_sha256.json").read_text(encoding="utf-8"))["tars"]     # mã băm 27 tar
+WEIGHT_URL = "https://download.pytorch.org/models/resnet50-19c8e357.pth"
 
 
 def say(*a):
@@ -105,6 +109,127 @@ def prepare(downloads, data, lock=LOCK, weight=WEIGHT, weight_prefix=WEIGHT_PREF
     weight.parent.mkdir(exist_ok=True)
     shutil.copyfile(src, weight)
     say(f"OK: dữ liệu ở {data}, trọng số ở {weight}. Bước tiếp: check")
+
+
+# ---------------------------------------------------------------- from-folder: dữ liệu có sẵn trên máy (chỉ đọc)
+class _HashSink:
+    """Nhận byte của tar đang ghi và chỉ băm, không ghi ra đĩa."""
+    def __init__(self):
+        self.h, self.n = hashlib.sha256(), 0
+
+    def write(self, b):
+        self.h.update(b)
+        self.n += len(b)
+        return len(b)
+
+    def tell(self):
+        return self.n
+
+
+def tar_digest(img_root, names):
+    """(kích thước, SHA-256) của tar mà cell A sẽ dựng từ các ảnh này — trùng nhau khi và chỉ khi ảnh trùng."""
+    sink = _HashSink()
+    with tarfile.open(fileobj=sink, mode="w", format=tarfile.GNU_FORMAT) as tar:
+        for p in names:
+            data = (Path(img_root) / p).read_bytes()
+            info = tarfile.TarInfo("img/" + p)
+            info.size, info.mtime = len(data), 0
+            tar.addfile(info, io.BytesIO(data))
+    return sink.n, sink.h.hexdigest()
+
+
+def locked_splits(data):
+    """Tạo lại splits_v2 đúng tham số đã dùng ngày 20/11 (kết quả trùng từng byte nếu list trùng)."""
+    from experiment_data import make_manifest
+    return {k: make_manifest(data, k, 3, 2026, check_images=False, min_val_positive=100) for k in (1, 2, 3)}
+
+
+def download(url, dest):
+    import urllib.request
+    part = Path(str(dest) + ".part")
+    urllib.request.urlretrieve(url, part)
+    os.replace(part, dest)
+
+
+def from_folder(src, data, lists_dir=None, lock=LOCK, ref=REFERENCE, tars=TARS, n_images=N_IMAGES,
+                make_splits=locked_splits, weight=WEIGHT, weight_prefix=WEIGHT_PREFIX, fetch=download):
+    """Dùng ảnh có sẵn trên máy (ví dụ D:\\KLTN_Khang\\DISFA_Data, sắp xếp kiểu gì cũng được): chỉ ĐỌC thư mục đó,
+    chép vào <data>, rồi kiểm từng subject bằng SHA-256 tar so với bản chuẩn. Lệch là dừng, không đánh dấu .img_ok."""
+    src, data = Path(src), Path(data)
+    if not src.is_dir():
+        raise SystemExit(f"Không thấy thư mục {src}")
+    data.mkdir(parents=True, exist_ok=True)
+    if (data / ".img_ok").exists():
+        say(f"{data} đã chuẩn bị xong trước đó, bỏ qua")
+        return
+
+    say("== 1/4 List: tìm và đối chiếu mã băm")
+    look = Path(lists_dir) if lists_dir else src
+    (data / "list").mkdir(exist_ok=True)
+    bad = []
+    for name, want in ref["lists"].items():
+        good = [p for p in look.rglob(name) if p.is_file() and sha256(p) == want]
+        if good:
+            shutil.copyfile(good[0], data / "list" / name)
+        else:
+            bad.append(name)
+    if bad:
+        raise SystemExit(f"{len(bad)} file list thiếu hoặc khác bản chuẩn trong {look}: {bad}\n"
+                         "Chép thư mục DISFA\\list từ máy cá nhân (12 file nhỏ) sang máy này rồi thêm --lists <thư mục đó>")
+
+    say("== 2/4 splits_v2: tạo lại từ list và đối chiếu với bản khoá")
+    (data / "splits_v2").mkdir(exist_ok=True)
+    for k, m in make_splits(data).items():
+        f = data / "splits_v2" / f"fold{k}.json"
+        f.write_bytes(json.dumps(m, indent=2).encode("utf-8"))      # LF như bản ghi trên Colab
+        if sha256(f) != lock["manifests"][k]:
+            raise SystemExit(f"splits_v2/fold{k}.json tạo lại KHÁC bản khoá: gửi Claude xem")
+
+    say(f"== 3/4 Ảnh: quét {src} (chỉ đọc), chép vào {data / 'img'}, kiểm từng subject")
+    names = sorted({p.strip() for k in (1, 2, 3)
+                    for p in (data / "list" / f"DISFA_test_img_path_fold{k}.txt").read_text().split() if p.strip()})
+    if len(names) != n_images:
+        raise SystemExit(f"List có {len(names)} ảnh, cần {n_images}")
+    found = {}
+    for p in src.rglob("*.png"):
+        if re.fullmatch(r"SN\d{3}", p.parent.name) and p.stem.isdigit():
+            found.setdefault(f"{p.parent.name}/{p.name}", p)
+    missing = [n for n in names if n not in found]
+    if missing:
+        raise SystemExit(f"Thiếu {len(missing)} ảnh dạng SNxxx\\<số>.png trong {src}, ví dụ {missing[:3]}")
+    free = shutil.disk_usage(data).free / 1e9
+    if free < 10:
+        raise SystemExit(f"Ổ chứa {data} còn {free:.0f} GB, cần khoảng 10 GB để chép ảnh")
+    subjects = sorted({n.split("/")[0] for n in names})
+    bad = []
+    for i, s in enumerate(subjects, 1):
+        mine = [n for n in names if n.split("/")[0] == s]
+        (data / "img" / s).mkdir(parents=True, exist_ok=True)
+        for n in mine:
+            dst = data / "img" / n
+            if not dst.exists() or dst.stat().st_size != found[n].stat().st_size:
+                shutil.copyfile(found[n], dst)
+        size, digest = tar_digest(data / "img", mine)
+        ok = (size, digest) == (tars[s]["size"], tars[s]["sha256"])
+        say(f"  {i:>2}/{len(subjects)} {s}: {'KHỚP' if ok else 'KHÁC'}")
+        if not ok:
+            bad.append(s)
+    if bad:
+        raise SystemExit(f"Ảnh KHÁC bản chuẩn ở {bad}: KHÔNG train bằng dữ liệu này (seed sẽ không so được với Colab). "
+                         "Dùng gói LVTS_TriLe thay thế.")
+
+    say("== 4/4 Trọng số ImageNet")
+    have = [p for p in src.rglob(weight.name) if p.is_file() and sha256(p).startswith(weight_prefix)]
+    weight.parent.mkdir(parents=True, exist_ok=True)
+    if have:
+        shutil.copyfile(have[0], weight)
+    elif not (weight.exists() and sha256(weight).startswith(weight_prefix)):
+        say(f"  tải {WEIGHT_URL}")
+        fetch(WEIGHT_URL, weight)
+    if not sha256(weight).startswith(weight_prefix):
+        raise SystemExit(f"{weight} sai nội dung")
+    (data / ".img_ok").write_text(json.dumps(dict(n_images=len(names), subjects=subjects, source=str(src))))
+    say(f"OK: {len(names)} ảnh trùng bản chuẩn, dữ liệu ở {data}. Bước tiếp: check, smoke")
 
 
 # ---------------------------------------------------------------- check
@@ -313,6 +438,10 @@ def main(argv=None):
     p = sub.add_parser("prepare")
     p.add_argument("--downloads", required=True)
     p.add_argument("--data", required=True)
+    f = sub.add_parser("from-folder", help="dùng ảnh có sẵn trên máy (chỉ đọc), kiểm từng subject")
+    f.add_argument("--src", required=True)
+    f.add_argument("--data", required=True)
+    f.add_argument("--lists", help="thư mục chứa 12 file list chuẩn, nếu list trong --src khác bản chuẩn")
     for name in ("check", "smoke", "train"):
         q = sub.add_parser(name)
         q.add_argument("--data", required=True)
@@ -325,6 +454,8 @@ def main(argv=None):
     a = ap.parse_args(argv)
     if a.cmd == "prepare":
         prepare(a.downloads, a.data)
+    elif a.cmd == "from-folder":
+        from_folder(a.src, a.data, a.lists)
     elif a.cmd == "check":
         check(a.data)
     elif a.cmd == "smoke":

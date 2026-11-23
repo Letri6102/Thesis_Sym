@@ -14,6 +14,7 @@ Mỗi backbone phải so với số của chính backbone đó.
 - **Không train, evaluate hay chạy Tầng 2 ở máy local.** Mọi thứ đụng tới dataset hoặc GPU đều chạy trên **Google Colab** qua notebook.
   - **Ngoại lệ (chủ dự án mở 23/11):** được **train** run của bộ 18 run trên máy GPU riêng (RTX 5090, remote), chỉ bằng `pc/train_18_run.py` (hướng dẫn `pc/README.md`), cùng khoá. Kết quả nhập vào Drive bằng cell I. Evaluate, Tầng 2 và mở test vẫn chỉ trên Colab. Máy dev hiện tại (RTX 5060 Ti) không phải máy train.
   - Máy 5090 chỉ được dùng thư mục `D:\LVTS_TriLe`, truy cập qua UltraViewer, không đăng nhập Drive. Gói chép sang dựng bằng `pc/make_bundle.py`, ảnh lấy từ `img/` ở máy cá nhân. **Chỉ train khi cell J báo `KHỚP 27/27`** (SHA-256 tar so với `DISFA_img` trên Drive; số ghi ở `pc/bundle_tar_sha256.json`).
+  - Cách đang dùng (23/11): máy 5090 có sẵn dữ liệu ở `D:\KLTN_Khang\DISFA_Data` (thư mục của người khác, **chỉ đọc**). `pc/windows/train_data_co_san.bat` → `from-folder`: kiểm list (`pc/data_reference.json`), tạo lại `splits_v2` (trùng byte), chép ảnh vào `D:\LVTS_TriLe\DISFA` và kiểm SHA-256 từng subject; lệch là dừng.
 - **Mọi code đều phải commit và push lên GitHub** (`Letri6102/Thesis_Sym`, nhánh `main`). Notebook Colab lấy code từ git, **không** đọc code từ Drive.
 - **Dataset và kết quả chạy vẫn nằm trên Google Drive** (`MyDrive/Sym`) như cũ. Không đưa data, trọng số hay kết quả lên git.
 - Ở local chỉ được: sửa code, chạy unit test nhẹ (`Contrastive_V1/.venv-tests`, `pytest tests`), đọc log và kết quả đã kéo từ Drive về để phân tích.
