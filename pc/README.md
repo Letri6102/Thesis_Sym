@@ -22,6 +22,12 @@ Chọn cả 4 mục rồi bấm Download. Drive sẽ nén thành một hoặc v�
 
 Giải nén **tất cả** file zip vào cùng một thư mục, ví dụ `D:\sym_download` hoặc `~/sym_download`. Cấu trúc bên trong không quan trọng: lệnh `prepare` tự tìm file.
 
+**Máy 5090 không kết nối Drive (cách đang dùng, 23/11):**
+1. Tải 4 mục trên về máy cá nhân và giải nén vào `C:\sym_download`.
+2. Chép sang máy 5090: `scp -r -P <port> C:\sym_download <user>@<host>:~/`.
+3. Khi train xong, lấy zip kết quả về máy cá nhân: `scp -P <port> "<user>@<host>:~/Thesis_Sym/pc_runs/upload/*.zip" C:\pc_upload\`.
+4. Kéo các zip đó vào `MyDrive/Sym/upload/`, rồi làm bước 7.
+
 ## 2. Lấy code
 
 ```bash
