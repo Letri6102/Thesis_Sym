@@ -103,6 +103,7 @@ Quy tắc cho mọi cell:
 
 - Thứ tự 8 AU: `1, 2, 4, 6, 9, 12, 25, 26`; intensity ≥ 2 là dương. Chia 3 fold theo subject, mỗi fold 3 subject làm val bên trong.
 - **3 fold ngoài là fold GỐC** (kiểm 23/11): test fold 1 = part3, fold 2 = part2, fold 3 = part1 của code gốc `Contrastive_V1/tool/DISFA_image_label_process.py` (ME-GraphAU, cùng cách chia paper dùng). Ta chỉ tự chia **inner val** (3 subject lấy từ 18 subject train của mỗi fold) để chọn checkpoint mà không nhìn test; tập test không đổi. Train trên đủ 18 subject như paper là dòng (b) refit.
+  - **Đối chiếu với data gốc (23/11):** 12 list sinh lại từ nhãn gốc `ActionUnit_Labels` (bản `C:\CODE\DataSym`, cùng cấu trúc thư mục của Khang trên máy 5090) bằng đúng logic script gốc trùng **từng byte** với list đang dùng; 45.479/45.479 ảnh có trong `DataSym\img` trùng từng byte với ảnh đang dùng. Data gốc không có file list/fold: fold là do script gốc sinh ra.
 - Inner val (20/11): `splits_v2`, sinh bằng `experiment_data.py --split-seed 2026 --val-subjects 3 --min-val-positive 100`. Fold 2/3 trùng bản cũ, fold 1 rút lại, vì val cũ có AU2 = 4 frame và AU1 = 73 frame, tất cả từ một subject. Val fold 1 mới là SN002, SN016, SN032. **Chủ dự án đã chọn giữ `splits_v2`** dù fit fold 1 mất khoảng 45% số frame AU1/AU2/AU26 (AU2 còn 1098); đã cân nhắc mức trần "val ≤ 1/3" và không chọn. Không tự sinh lại split.
 - Bỏ variant `current` (12/11). Các variant chính: `baseline` và `full`.
 - Mọi lựa chọn (checkpoint, ngưỡng, λ, luật) **chỉ** dựa trên inner val. Outer test chỉ mở **một lần**, sau khi đã chốt thiết kế.

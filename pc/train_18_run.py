@@ -141,6 +141,51 @@ def tar_digest(img_root, names):
     return sink.n, sink.h.hexdigest()
 
 
+# Chia fold gốc của ME-GraphAU (Contrastive_V1/tool/DISFA_image_label_process.py), cũng là cách paper dùng.
+PARTS = (["SN002", "SN010", "SN001", "SN026", "SN027", "SN032", "SN030", "SN009", "SN016"],
+         ["SN013", "SN018", "SN011", "SN028", "SN012", "SN006", "SN031", "SN021", "SN024"],
+         ["SN003", "SN029", "SN023", "SN025", "SN008", "SN005", "SN007", "SN017", "SN004"])
+LIST_AUS = (1, 2, 4, 6, 9, 12, 25, 26)
+
+
+def lists_from_labels(labels_root, parts=PARTS):
+    """Sinh 12 file list từ ActionUnit_Labels gốc đúng như script gốc: intensity >= 2 là dương;
+    fold1 test = part3, fold2 test = part2, fold3 test = part1; train = hai part còn lại theo đúng thứ tự gốc."""
+    import numpy as np
+
+    def part(subjects):
+        names, arrays = [], []
+        for fr in subjects:
+            d = Path(labels_root) / fr
+            total = len((d / f"{fr}_au1.txt").read_text().splitlines())
+            a = np.zeros((total, 8), dtype=int)
+            for ai, au in enumerate(LIST_AUS):
+                f = d / f"{fr}_au{au}.txt"
+                if f.is_file():
+                    for t, line in enumerate(f.read_text().splitlines()):
+                        a[t, ai] = 1 if int(line.split(",")[1]) >= 2 else 0
+            names += [f"{fr}/{i}.png" for i in range(total)]
+            arrays.append(a)
+        return names, np.concatenate(arrays, axis=0)
+
+    def paths(names):
+        return "".join(n + "\n" for n in names).encode()
+
+    def labels(arr):
+        buf = io.BytesIO()
+        np.savetxt(buf, arr, fmt="%d", delimiter=" ")
+        return buf.getvalue()
+
+    p1, p2, p3 = (part(p) for p in parts)
+    out = {}
+    for k, test, train in ((1, p3, (p1, p2)), (2, p2, (p1, p3)), (3, p1, (p2, p3))):
+        out[f"DISFA_test_img_path_fold{k}.txt"] = paths(test[0])
+        out[f"DISFA_test_label_fold{k}.txt"] = labels(test[1])
+        out[f"DISFA_train_img_path_fold{k}.txt"] = paths(train[0][0] + train[1][0])
+        out[f"DISFA_train_label_fold{k}.txt"] = labels(np.concatenate([train[0][1], train[1][1]]))
+    return out
+
+
 def locked_splits(data):
     """Tạo lại splits_v2 đúng tham số đã dùng ngày 20/11 (kết quả trùng từng byte nếu list trùng)."""
     from experiment_data import make_manifest
@@ -155,7 +200,7 @@ def download(url, dest):
 
 
 def from_folder(src, data, lists_dir=None, lock=LOCK, ref=REFERENCE, tars=TARS, n_images=N_IMAGES,
-                make_splits=locked_splits, weight=WEIGHT, weight_prefix=WEIGHT_PREFIX, fetch=download):
+                make_splits=locked_splits, weight=WEIGHT, weight_prefix=WEIGHT_PREFIX, fetch=download, parts=PARTS):
     """Dùng ảnh có sẵn trên máy (ví dụ D:\\KLTN_Khang\\DISFA_Data, sắp xếp kiểu gì cũng được): chỉ ĐỌC thư mục đó,
     chép vào <data>, rồi kiểm từng subject bằng SHA-256 tar so với bản chuẩn. Lệch là dừng, không đánh dấu .img_ok."""
     src, data = Path(src), Path(data)
@@ -177,6 +222,18 @@ def from_folder(src, data, lists_dir=None, lock=LOCK, ref=REFERENCE, tars=TARS, 
             shutil.copyfile(good[0], data / "list" / name)
         else:
             (differ if cands else absent).append(name)
+    au1 = [p.parent.parent for p in src.rglob("SN001_au1.txt")] if not lists_dir and len(absent) == len(ref["lists"]) else []
+    if au1:                                        # không có list: sinh từ nhãn gốc bằng đúng logic script gốc
+        say(f"  không có file list; sinh list từ nhãn gốc {au1[0]} theo fold gốc (part1/2/3)")
+        made = lists_from_labels(au1[0], parts)
+        absent = []
+        for name, want in ref["lists"].items():
+            if hashlib.sha256(made[name]).hexdigest() == want:
+                (data / "list" / name).write_bytes(made[name])
+            else:
+                differ.append(name)
+        if not differ:
+            say("  12/12 list sinh từ nhãn gốc TRÙNG từng byte với list đang dùng trên Colab")
     if absent or differ:
         raise SystemExit(f"List trong {look}: không thấy {len(absent)} file, {len(differ)} file có nhưng KHÁC bản chuẩn.\n"
                          f"  không thấy: {absent}\n  khác: {differ}\n"

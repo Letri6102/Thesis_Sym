@@ -14,6 +14,7 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
+import numpy as np
 import pytest
 import torch
 
@@ -587,3 +588,63 @@ def test_cell_i_imports_refit_only_with_its_run_a(tmp_path):
     rec = json.loads((sym / "runs_refit1" / "full" / "fold2" / "seed2" / "refit.json").read_text())
     assert rec["E"] == 1 and rec["model"] == "last.pt"
     assert "runs_refit1: 2/18" in log and "runs_aug1: 2/18" in log
+
+
+# ---------------------------------------------------------------- list sinh từ nhãn gốc (thư mục kiểu Khang: img + ActionUnit_Labels)
+def write_labels(root, subjects, frames=3, seed=0, missing=()):
+    """ActionUnit_Labels/SNxxx/SNxxx_auN.txt như DISFA gốc: 'frame,intensity', frame đánh từ 1."""
+    rng = np.random.default_rng(seed)
+    for s in subjects:
+        d = root / s
+        d.mkdir(parents=True, exist_ok=True)
+        for au in (1, 2, 4, 5, 6, 9, 12, 15, 17, 20, 25, 26):
+            if (s, au) in missing:
+                continue
+            vals = rng.integers(0, 6, frames)
+            vals[0] = 3                                    # mọi AU đều có frame dương trong mọi subject
+            (d / f"{s}_au{au}.txt").write_text("".join(f"{t + 1},{v}\n" for t, v in enumerate(vals)))
+
+
+def test_lists_from_labels_equals_original_script(tmp_path, monkeypatch):
+    import runpy
+    subjects = [s for p in PC.PARTS for s in p]
+    write_labels(tmp_path / "data" / "DISFA" / "ActionUnit_Labels", subjects, missing={("SN005", 26)})
+    (tmp_path / "data" / "DISFA" / "list").mkdir()
+    (tmp_path / "work").mkdir()
+    monkeypatch.chdir(tmp_path / "work")
+    with redirect_stdout(io.StringIO()):
+        runpy.run_path(str(REPO / "Contrastive_V1" / "tool" / "DISFA_image_label_process.py"))
+    made = PC.lists_from_labels(tmp_path / "data" / "DISFA" / "ActionUnit_Labels")
+    assert len(made) == 12
+    for name, b in made.items():                           # script gốc ghi img_path ở chế độ text (CRLF trên Windows)
+        assert (tmp_path / "data" / "DISFA" / "list" / name).read_bytes().replace(b"\r\n", b"\n") == b, name
+
+
+def test_from_folder_generates_lists_from_original_labels(tmp_path):
+    from experiment_data import make_manifest
+    parts = (["SN001", "SN002"], ["SN003", "SN004"], ["SN005", "SN006"])
+    subjects = [s for p in parts for s in p]
+    src = tmp_path / "KLTN_Khang" / "DISFA_Data"
+    write_labels(src / "ActionUnit_Labels", subjects, frames=4, seed=3)
+    for s in subjects:
+        (src / "img" / s).mkdir(parents=True)
+        for j in range(4):
+            (src / "img" / s / f"{j}.png").write_bytes(f"{s}-{j}".encode() * 7)
+    truth = tmp_path / "truth"
+    (truth / "list").mkdir(parents=True)
+    for name, b in PC.lists_from_labels(src / "ActionUnit_Labels", parts).items():
+        (truth / "list" / name).write_bytes(b)
+    splits = lambda data: {k: make_manifest(data, k, val_subject_count=1, check_images=False) for k in (1, 2, 3)}
+    tars = {s: dict(zip(("size", "sha256"), PC.tar_digest(src / "img", [f"{s}/{j}.png" for j in range(4)]))) for s in subjects}
+    kw = dict(lock=dict(CI.LOCK, manifests={k: sha(json.dumps(m, indent=2).encode()) for k, m in splits(truth).items()}),
+              ref=dict(lists={n: sha((truth / "list" / n).read_bytes()) for n in PC.REFERENCE["lists"]}),
+              tars=tars, n_images=24, make_splits=splits, parts=parts, fetch=lambda url, dest: Path(dest).write_bytes(b"weights"),
+              weight=tmp_path / "ckpt" / "resnet50-19c8e357.pth", weight_prefix=sha(b"weights")[:8])
+    with redirect_stdout(io.StringIO()) as out:
+        PC.from_folder(src, tmp_path / "DISFA", **kw)
+    assert "12/12 list sinh từ nhãn gốc TRÙNG" in out.getvalue() and (tmp_path / "DISFA" / ".img_ok").exists()
+    for n in PC.REFERENCE["lists"]:
+        assert (tmp_path / "DISFA" / "list" / n).read_bytes() == (truth / "list" / n).read_bytes()
+    (src / "ActionUnit_Labels" / "SN003" / "SN003_au4.txt").write_text("1,0\n2,0\n3,0\n4,0\n")      # nhãn khác bản chuẩn
+    with pytest.raises(SystemExit, match="KHÁC bản chuẩn"), redirect_stdout(io.StringIO()):
+        PC.from_folder(src, tmp_path / "DISFA2", **kw)
