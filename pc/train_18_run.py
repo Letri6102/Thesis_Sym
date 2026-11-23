@@ -362,6 +362,14 @@ def launch(cmd, log):
     log.parent.mkdir(parents=True, exist_ok=True)
     say(f">> log: {log}")
     lines = []
+    out = log.parent.parent                          # <OUT>/logs/<log>: tiến độ tính trên <OUT>
+    live, inline, shown = "smoke" not in log.name, False, 0.0
+
+    def newline():
+        nonlocal inline
+        if inline:
+            print(flush=True)
+            inline = False
     with open(log, "w", encoding="utf-8") as f, subprocess.Popen(
             cmd, cwd=CODE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8",
             errors="replace", bufsize=1, env=dict(os.environ, PYTHONUTF8="1", PYTHONUNBUFFERED="1")) as p:
@@ -370,12 +378,23 @@ def launch(cmd, log):
                 f.write(line)
                 f.flush()
                 lines.append(line)
+                step = STEP_RE.match(line)
                 if line.startswith('{"epoch"'):
                     r = json.loads(line)
+                    newline()
                     say(f"   ep{r['epoch']:>2}  wa={r['train']['wa']:.4f}  valF1={r['val']['macro_f1']:.3f}  "
-                        f"{r['seconds'] / 60:.1f} phút")
-                elif not re.match(r"epoch \d+/\d+ step \d+/", line) and "Warning" not in line:
+                        f"{r['seconds'] / 60:.1f} phút" + (f"  | {progress_line(out)}" if live else ""))
+                elif step:
+                    if live and time.time() - shown > 20:      # dòng tiến độ tại chỗ, làm mới mỗi 20 giây
+                        shown = time.time()
+                        e, n_e, s, n = map(int, step.groups())
+                        text = f"   epoch {e}/{n_e} {100 * s / n:3.0f}% | {progress_line(out)}"
+                        print("\r" + text[:110].ljust(110), end="", flush=True)
+                        inline = True
+                elif "Warning" not in line and "warnings.warn" not in line:
+                    newline()
                     say("   " + line.rstrip())
+            newline()
         except KeyboardInterrupt:
             p.terminate()
             p.wait()
@@ -544,6 +563,155 @@ def smoke(data, out=OUT, lock=LOCK, keep=False, run=launch):
     return dict(init=init, same_as_colab=init == PILOT_INIT, runs=res)
 
 
+# ---------------------------------------------------------------- tiến độ (chỉ đọc, chạy song song với train được)
+SEC_DEFAULT = {"baseline": 170.0, "full": 190.0}   # giây/epoch đo trên 5090 ngày 23/11 (gồm val), khi chưa có số đo
+REFIT_SCALE = 1.2                                    # refit train trên 18 subject thay vì 15: ước lượng khi chưa đo
+RUN_OVERHEAD = 60.0                                  # khởi động + nén zip mỗi run, giây (ước lượng)
+LIVE_MIN = 15                                        # log được ghi trong 15 phút gần nhất thì coi là đang chạy
+STEP_RE = re.compile(r"epoch (\d+)/(\d+) step (\d+)/(\d+)")
+
+
+def _hist(rd):
+    try:
+        h = json.loads((Path(rd) / "history.json").read_text(encoding="utf-8"))
+        return h if isinstance(h, list) else []
+    except (OSError, ValueError):
+        return []
+
+
+def _latest_log(out, name):
+    pat = re.compile(r"\d{8}_\d{6}_" + re.escape(name) + r"\.log")
+    logs = [p for p in (Path(out) / "logs").glob(f"*{name}.log") if pat.fullmatch(p.name)]
+    return max(logs, key=lambda p: p.stat().st_mtime, default=None)
+
+
+def _in_epoch(log, done):
+    """Phần đã chạy của epoch thứ done+1, theo dòng 'epoch e/E step s/n' cuối cùng của log."""
+    try:
+        with open(log, "rb") as f:
+            f.seek(0, 2)
+            f.seek(max(0, f.tell() - 65536))
+            tail = f.read().decode("utf-8", "replace")
+    except OSError:
+        return 0.0
+    m = STEP_RE.findall(tail)
+    if not m:
+        return 0.0
+    e, _, s, n = map(int, m[-1])
+    return min(s / n, 1.0) if e == done + 1 and n else 0.0
+
+
+def _mean(xs, default):
+    xs = [x for x in xs if isinstance(x, (int, float))]
+    return sum(xs) / len(xs) if xs else default
+
+
+def progress(out=OUT, lock=LOCK, now=None):
+    """Tiến độ (a) và refit trên máy này, tính theo epoch có trọng số thời gian; thời gian còn lại dựa trên tốc độ đo
+    được trên chính máy này. E của refit chỉ biết khi run (a) xong; trước đó lấy trung bình các E đã biết (chưa có thì 5)."""
+    from stage2_decoder.check_stage1 import best_point
+    out, now = Path(out), time.time() if now is None else now
+    n_ep = lock["common"]["epochs"]
+    roots = {"a": out / "runs_aug1", "refit": out / "runs_refit1"}
+
+    def rd(ph, v, k, s):
+        return roots[ph] / v / f"fold{k}" / f"seed{s}"
+
+    hist = {(ph, v, k, s): _hist(rd(ph, v, k, s)) for ph in roots for v, k, s in jobs()}
+    sec = {("a", v): _mean([r.get("seconds") for (ph, vv, _, _), h in hist.items() if ph == "a" and vv == v for r in h],
+                           SEC_DEFAULT[v]) for v in ("baseline", "full")}
+    for v in ("baseline", "full"):
+        sec["refit", v] = _mean([r.get("seconds") for (ph, vv, _, _), h in hist.items() if ph == "refit" and vv == v
+                                 for r in h], REFIT_SCALE * sec["a", v])
+    known_e = {}
+    for v, k, s in jobs():
+        h = hist["a", v, k, s]
+        if len(h) >= n_ep:
+            try:
+                known_e[v, k, s] = int(best_point(h)[0])
+            except (KeyError, ValueError, TypeError):
+                pass
+    e_guess = _mean(list(known_e.values()), 5.0)
+    items = []
+    for ph, prefix in (("a", ""), ("refit", "refit1_")):
+        for v, k, s in jobs():
+            total = n_ep if ph == "a" else known_e.get((v, k, s), e_guess)
+            done = min(len(hist[ph, v, k, s]), total)
+            name = f"{prefix}{v}_fold{k}_seed{s}"
+            log = _latest_log(out, name) if done < total else None
+            live = log is not None and now - log.stat().st_mtime < LIVE_MIN * 60
+            got = done + (_in_epoch(log, int(done)) if live else 0.0)
+            items.append(dict(phase=ph, variant=v, fold=k, seed=s, total=total, done=got, sec=sec[ph, v],
+                              finished=done >= total, live=live, epoch=int(done) + 1,
+                              left=(total - got) * sec[ph, v] + (RUN_OVERHEAD if done < total else 0.0)))
+
+    def agg(its):
+        full = sum(i["total"] * i["sec"] for i in its)
+        return dict(pct=100 * sum(i["done"] * i["sec"] for i in its) / full if full else 100.0,
+                    runs_done=sum(i["finished"] for i in its), n=len(its), left=sum(i["left"] for i in its))
+    live = [i for i in items if i["live"]]
+    return dict(now=now, a=agg([i for i in items if i["phase"] == "a"]), refit=agg([i for i in items if i["phase"] == "refit"]),
+                total=agg(items), current=live[0] if live else None, known_e=len(known_e), e_guess=e_guess,
+                sec={f"{ph}/{v}": x for (ph, v), x in sec.items()}, epochs=n_ep)
+
+
+def _clock(t):
+    return time.strftime("%H:%M %d/%m", time.localtime(t))
+
+
+def _bar(pct, width=30):
+    n = int(round(width * min(max(pct, 0), 100) / 100))
+    return "[" + "#" * n + "." * (width - n) + "]"
+
+
+def progress_text(p):
+    now, a, r, t = p["now"], p["a"], p["refit"], p["total"]
+    lines = [f"TIẾN ĐỘ TRAIN TRÊN MÁY NÀY — cập nhật {_clock(now)}",
+             f"  (a)    {_bar(a['pct'])} {a['pct']:5.1f}%  {a['runs_done']:>2}/{a['n']} run xong  còn ~{a['left'] / 3600:.1f} giờ",
+             f"  refit  {_bar(r['pct'])} {r['pct']:5.1f}%  {r['runs_done']:>2}/{r['n']} run xong  còn ~{r['left'] / 3600:.1f} giờ"
+             f"  (E đã biết {p['known_e']}/18, TB {p['e_guess']:.1f} epoch)",
+             f"  TỔNG   {_bar(t['pct'])} {t['pct']:5.1f}%  xong (a) ~{_clock(now + a['left'])}, xong cả refit ~{_clock(now + t['left'])}"]
+    c = p["current"]
+    if c:
+        tot = p["epochs"] if c["phase"] == "a" else int(round(c["total"]))
+        frac = c["done"] - int(c["done"])
+        lines.append(f"  Đang chạy: {'refit ' if c['phase'] == 'refit' else ''}{c['variant']}/fold{c['fold']}/seed{c['seed']}"
+                     f" — epoch {c['epoch']}/{tot}, {100 * frac:.0f}% epoch này — run xong ~{_clock(now + c['left'])}")
+    elif t["runs_done"] == t["n"]:
+        lines.append("  XONG HẾT 18 run (a) và 18 run refit. Zip nằm ở pc_runs\\upload.")
+    else:
+        lines.append(f"  Không thấy run nào ghi log trong {LIVE_MIN} phút: train có thể đang dừng. "
+                     "Chạy lại train_data_co_san.bat để tiếp tục (run dở sẽ resume).")
+    s = p["sec"]
+    lines.append(f"  Tốc độ đo trên máy này: baseline {s['a/baseline'] / 60:.1f} / full {s['a/full'] / 60:.1f} phút/epoch; "
+                 f"refit {s['refit/baseline'] / 60:.1f} / {s['refit/full'] / 60:.1f}")
+    return "\n".join(lines)
+
+
+def progress_line(out):
+    """Một dòng ngắn cho màn hình train; lỗi ở đây không bao giờ được làm dừng train."""
+    try:
+        p = progress(out)
+        return f"(a) {p['a']['pct']:.1f}% · tổng {p['total']['pct']:.1f}% · xong dự kiến {_clock(p['now'] + p['total']['left'])}"
+    except Exception:                                   # noqa: BLE001
+        return ""
+
+
+def watch(out=OUT, every=60, once=False):
+    try:
+        while True:
+            text = progress_text(progress(out))
+            if not once:
+                os.system("cls" if os.name == "nt" else "clear")
+            say(text)
+            if once:
+                return text
+            say(f"\n(làm mới mỗi {every} giây; đóng cửa sổ này không ảnh hưởng train)")
+            time.sleep(every)
+    except KeyboardInterrupt:
+        return None
+
+
 def status(out=OUT, lock=LOCK):
     runs = Path(out) / "runs_aug1"
     for v, k, s in jobs():
@@ -577,6 +745,8 @@ def main(argv=None):
         sub.choices[name].add_argument("--folds", type=int, nargs="+", default=[1, 2, 3], choices=(1, 2, 3))
         sub.choices[name].add_argument("--old-session-dead", action="store_true")
     sub.add_parser("status")
+    w = sub.add_parser("progress", help="%% hoàn thành và giờ xong dự kiến (chỉ đọc, chạy song song với train được)")
+    w.add_argument("--watch", type=int, default=0, metavar="GIÂY", help="làm mới sau mỗi GIÂY giây; 0 = in một lần")
     a = ap.parse_args(argv)
     if a.cmd == "prepare":
         prepare(a.downloads, a.data)
@@ -593,6 +763,8 @@ def main(argv=None):
     elif a.cmd == "refit":
         check(a.data)
         refit(a.data, a.seeds, a.folds, old_session_dead=a.old_session_dead)
+    elif a.cmd == "progress":
+        watch(every=a.watch, once=a.watch <= 0)
     else:
         status()
 

@@ -4,6 +4,8 @@ import importlib.metadata
 import importlib.util
 import io
 import json
+import os
+import sys
 import shutil
 import subprocess
 import tarfile
@@ -683,3 +685,55 @@ def test_from_folder_generates_lists_from_original_labels(tmp_path):
     (src / "ActionUnit_Labels" / "SN003" / "SN003_au4.txt").write_text("1,0\n2,0\n3,0\n4,0\n")      # nhãn khác bản chuẩn
     with pytest.raises(SystemExit, match="KHÁC bản chuẩn"), redirect_stdout(io.StringIO()):
         PC.from_folder(src, tmp_path / "DISFA2", **kw)
+
+
+# ---------------------------------------------------------------- tiến độ (% và giờ xong dự kiến)
+def test_progress_counts_epochs_and_running_step(tmp_path):
+    lock, out = toy_lock(), tmp_path / "out"
+    runs = out / "runs_aug1"
+    for v in ("baseline", "full"):                                    # fold 1 seed 0 xong cả cặp
+        write_run(runs / v / "fold1" / "seed0", v, 1, 0, lock)
+    rd = runs / "baseline" / "fold2" / "seed0"                        # đang chạy: 5 epoch + nửa epoch 6
+    write_run(rd, "baseline", 2, 0, lock, epochs=5, best=False)
+    (out / "logs").mkdir(parents=True)
+    (out / "logs" / "20261124_010203_baseline_fold2_seed0.log").write_text(
+        "epoch 6/20 step 100/1000 loss=1\nepoch 6/20 step 500/1000 loss=1\n")
+    (out / "logs" / "20261124_010203_refit1_baseline_fold2_seed0.log").write_text("epoch 9/20 step 999/1000\n")
+    now = time.time()
+    p = PC.progress(out, lock, now=now)
+    assert p["a"]["runs_done"] == 2 and p["current"]["variant"] == "baseline" and p["current"]["fold"] == 2
+    assert p["current"]["done"] == pytest.approx(5.5) and p["current"]["epoch"] == 6
+    assert p["sec"]["a/baseline"] == 60. and p["known_e"] == 2 and p["e_guess"] == 1.0   # HIST: val phẳng → E = 1
+    assert p["a"]["pct"] == pytest.approx(100 * 45.5 / 360)                              # cùng tốc độ hai variant
+    assert p["current"]["left"] == pytest.approx(14.5 * 60 + PC.RUN_OVERHEAD)
+    text = PC.progress_text(p)
+    assert "Đang chạy: baseline/fold2/seed0 — epoch 6/20, 50%" in text and "2/18 run xong" in text
+    for f in (out / "logs").iterdir():                                 # log cũ > 15 phút: không coi là đang chạy
+        os.utime(f, (now - 3600, now - 3600))
+    p = PC.progress(out, lock, now=now)
+    assert p["current"] is None and "có thể đang dừng" in PC.progress_text(p)
+
+
+def test_progress_line_never_breaks_training(tmp_path):
+    assert PC.progress_line(tmp_path / "không_có") .startswith("(a) 0.0%")
+    with patch.object(PC, "progress", side_effect=RuntimeError("hỏng")):
+        assert PC.progress_line(tmp_path) == ""
+
+
+def test_launch_prints_live_progress(tmp_path):
+    code = ("import json\n"
+            "for s in range(0, 1000, 100): print(f'epoch 1/20 step {s}/1000 loss=1')\n"
+            "print('  warnings.warn(')\n"
+            "print(json.dumps({'epoch': 1, 'train': {'wa': .05}, 'val': {'macro_f1': .7}, 'seconds': 60}))\n")
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        text = PC.launch([sys.executable, "-c", code], tmp_path / "out" / "logs" / "20261124_000000_full_fold1_seed0.log")
+    shown = buf.getvalue()
+    assert "epoch 1/20" in shown and "tổng" in shown and "ep 1" in shown and "warnings.warn" not in shown
+    assert text.count("step") == 10                                    # log vẫn đủ mọi dòng
+
+
+def test_progress_monitor_bat():
+    b = (REPO / "pc" / "windows" / "theo_doi.bat").read_bytes()
+    assert b.count(b"\r\n") == b.count(b"\n") and max(b) < 128
+    assert b"progress --watch 60" in b and b"train_contrastive" not in b

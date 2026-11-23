@@ -14,6 +14,7 @@ Mỗi backbone phải so với số của chính backbone đó.
 - **Không train, evaluate hay chạy Tầng 2 ở máy local.** Mọi thứ đụng tới dataset hoặc GPU đều chạy trên **Google Colab** qua notebook.
   - **Ngoại lệ (chủ dự án mở 23/11):** được **train** run của bộ 18 run trên máy GPU riêng (RTX 5090, remote), chỉ bằng `pc/train_18_run.py` (hướng dẫn `pc/README.md`), cùng khoá. Kết quả nhập vào Drive bằng cell I. Evaluate, Tầng 2 và mở test vẫn chỉ trên Colab. Máy dev hiện tại (RTX 5060 Ti) không phải máy train.
   - Máy 5090 chỉ được dùng thư mục `D:\LVTS_TriLe`, truy cập qua UltraViewer, không đăng nhập Drive. Gói chép sang dựng bằng `pc/make_bundle.py`, ảnh lấy từ `img/` ở máy cá nhân. **Chỉ train khi cell J báo `KHỚP 27/27`** (SHA-256 tar so với `DISFA_img` trên Drive; số ghi ở `pc/bundle_tar_sha256.json`).
+  - **Không sửa file `.bat` đang chạy trên máy remote** (ví dụ `train_data_co_san.bat` khi đang train): cmd đọc `.bat` từng đoạn trong lúc chạy, nên `git pull` đổi file đó giữa chừng làm cửa sổ chạy sai lệnh. Thêm file mới hoặc sửa `.py` thì pull được; tiến trình Python đang chạy không đổi, bước sau mới dùng code mới.
   - Cách đang dùng (23/11): máy 5090 có sẵn dữ liệu ở `D:\KLTN_Khang\DISFA_Data` (thư mục của người khác, **chỉ đọc**). `pc/windows/train_data_co_san.bat` → `from-folder`: kiểm list (`pc/data_reference.json`), tạo lại `splits_v2` (trùng byte), chép ảnh vào `D:\LVTS_TriLe\DISFA` và kiểm SHA-256 từng subject; lệch là dừng.
 - **Mọi code đều phải commit và push lên GitHub** (`Letri6102/Thesis_Sym`, nhánh `main`). Notebook Colab lấy code từ git, **không** đọc code từ Drive.
 - **Dataset và kết quả chạy vẫn nằm trên Google Drive** (`MyDrive/Sym`) như cũ. Không đưa data, trọng số hay kết quả lên git.
@@ -82,7 +83,7 @@ MultiviewSymAU-master/       bản cài đặt lại SymGraphAU (Stage 2/3 cũ) 
 Tang2_Decoder.ipynb          Tầng 2 bản notebook 13/11 — LỖI THỜI, lệch đề cương; dùng stage2_decoder
 De_cuong_nghien_cuu.md       đề cương bản 2
 notebooks/                   Tong_hop_val.ipynb (Setup + cell I + cell L: tổng hợp chỉ val), Nhap_run_PC.ipynb (Setup + cell I), Bao_cao_log.ipynb (cell F) — bản đang dùng; Train_18_run.ipynb (cell G, K) không chạy nữa
-pc/                          train trên máy GPU riêng: setup_env.py, train_18_run.py (prepare/check/smoke/train/status), make_bundle.py + windows/*.bat (gói một thư mục), README.md
+pc/                          train trên máy GPU riêng: setup_env.py, train_18_run.py (prepare/from-folder/check/smoke/train/refit/status/progress), make_bundle.py + windows/*.bat (train_data_co_san.bat = train; theo_doi.bat = % và giờ xong dự kiến), README.md
 CONTEXT.md                   baseline SymGraphAU (paper), số cần vượt, đối chiếu pipeline, hướng cải tiến
 ```
 

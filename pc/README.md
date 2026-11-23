@@ -124,6 +124,16 @@ Lệnh chạy 1 epoch của `baseline` và 1 epoch của `full` (fold 2/seed 0, 
 - **Refit (dòng b):** `train_data_co_san.bat` và `2_train.bat` tự chạy `refit` ngay sau `train`. Lệnh này train lại mỗi run trên đủ 18 subject và dừng ở epoch E mà run đó chọn, cho ra zip `refit1_*.zip`. Chạy tay: `<py> pc/train_18_run.py refit --data <DATA> --seeds 0 1 2`.
 - **Đầu ra:** run nằm ở `pc_runs/runs_aug1/`, log ở `pc_runs/logs/`. Mỗi run xong được nén thành `pc_runs/upload/aug1_<variant>_fold<k>_seed<s>.zip` (khoảng 0,7 GB).
 
+## 6b. Xem tiến độ: % hoàn thành và giờ xong dự kiến
+
+- **Bấm là xem:** nháy đúp `D:\LVTS_TriLe\Thesis_Sym\pc\windows	heo_doi.bat`. Cửa sổ làm mới mỗi 60 giây, chỉ đọc, đóng lúc nào cũng được; không ảnh hưởng train đang chạy.
+  - Hiện ba thanh tiến độ: (a), refit, tổng. Kèm số run đã xong, run đang chạy (epoch, % của epoch), giờ xong run đó, giờ xong (a) và giờ xong cả refit.
+  - Thời gian còn lại tính theo tốc độ đo được trên chính máy này. E của refit chỉ biết khi run (a) tương ứng xong; trước đó lấy trung bình các E đã biết.
+  - Không run nào ghi log trong 15 phút thì báo train có thể đang dừng.
+- Từ bản code 24/11, cửa sổ train cũng in một dòng tiến độ tại chỗ (làm mới mỗi 20 giây) và in % tổng sau mỗi epoch.
+- Lệnh tay: `<py> pc/train_18_run.py progress` (in một lần) hoặc `progress --watch 60`.
+- **Kéo code mới khi đang train:** được, miễn là thay đổi không chạm vào file `.bat` đang chạy. cmd đọc file `.bat` từng đoạn trong lúc chạy, nên sửa file đó giữa chừng sẽ làm cửa sổ train chạy sai lệnh. Tiến trình Python đang chạy không bị ảnh hưởng; bước kế tiếp (ví dụ refit) mới dùng code mới.
+
 ## 7. Đưa kết quả về Drive
 
 1. Tải các file zip trong `pc_runs/upload/` lên `MyDrive/Sym/upload/` (tạo thư mục nếu chưa có).
