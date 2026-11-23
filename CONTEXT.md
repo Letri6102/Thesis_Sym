@@ -115,6 +115,11 @@ Trên BP4D (ngoài phạm vi luận văn): 65.3 với ResNet-50, 64.8 với Swin
 - Detector cũ, không augmentation, test thăm dò ngày 29/10: `baseline` seed 0 = **60.53**, kém 62.94 là 2.41 điểm. Thấp hơn cả JFL của paper (62.1). Số này chỉ là thăm dò.
 - Tầng 2 chạy thử trên run cũ, chỉ val, λ chọn trên chính val: `R0 − C0` từ +0.0 đến +0.9.
 - Pilot `runs_aug1` fold 2, seed 0 xong: val tốt nhất 76.8 / 74.9 (`baseline` / `full`), đều ở epoch 1. Đây là val của 3 subject, **không so được** với 63.0. Chi tiết ở CLAUDE.md §7.
+- **23/11: bộ 18 run train trên RTX 5090, đã xong 4/18** (seed 0, fold 1–2; khoá đúng, cặp khởi tạo đúng). Kết quả val (`baseline` / `full`):
+  - điểm tốt nhất: fold 1 là 71.3 / 73.0, fold 2 là 70.4 / 71.2, đỉnh ở epoch 3–5;
+  - TB epoch 11–20: fold 1 là 70.0 / 66.1, fold 2 là 61.2 / 65.2.
+
+  Fold 2 chạy lại pilot trên máy khác: loss train gần trùng, nhưng val lệch tới khoảng 5 điểm. Đó là mức nhiễu của val 3 subject giữa hai run đơn lẻ, nên chỉ CI 3 fold × 3 seed mới trả lời được `full − baseline`. Chi tiết ở CLAUDE.md §7.
 
 ---
 

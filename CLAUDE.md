@@ -138,6 +138,22 @@ Quy tắc cho mọi cell:
    - Dấu của `pilot − cũ`, `B2 − pilot`, `full − baseline` **đổi theo cách đo và theo variant**. 1 fold + 1 seed không xếp hạng được cấu hình; không gọi chênh vài điểm là cải thiện.
    - Val fold 2 (3 subject) **không so được** với 63.0 của paper (test, 3 fold).
 3. **ĐANG LÀM: train cả 18 run trên máy 5090** (đổi 23/11; `pc/windows/train_data_co_san.bat`). **Smoke 23/11 OK, bắt đầu train cùng ngày:** baseline và full cùng khởi tạo `a0b67247…`; val F1 epoch 1 fold 2 = 0.678 / 0.709 (pilot Colab 0.768 / 0.749). Baseline lệch 0.09 nên có cảnh báo, nhưng list, manifest và ảnh đã kiểm trùng từng byte; phần còn khác là RNG theo nền tảng (head khởi tạo, luồng aug của worker Windows), còn 0.768 là đỉnh của pilot. Epoch 1 trên 3 subject val không xếp hạng được gì. 2,9–3,2 phút/epoch → khoảng 1 giờ/run, 18 run khoảng 19 giờ, chưa kể refit. Kiểm thêm khi xong `fold2/seed0`: so đường val 20 epoch với pilot (`runs_aug1_colab`). Trước lần nhập đầu: dừng cell G/K, đổi tên `runs_aug1` → `runs_aug1_colab`. Phần cũ: Colab chạy seed 0/1 (cell G, `notebooks/Train_18_run.ipynb`); máy 5090 chạy seed 2 (`pc/train_18_run.py`; chưa chạy smoke trên máy đó), nhập về Drive bằng cell I. Gói `C:\CODE\Symbolic\LVTS_TriLe` dựng 23/11 từ code 4e610e2; chờ cell J. Đủ 18 run thì chạy Tầng 2 chỉ val (cell D, 3 fold × 3 seed).
+   - **Kết quả 23/11: 4/18 run (seed 0, fold 1 và 2).** Zip đã về máy cá nhân, CRC đúng; **chưa nhập Drive**. Kiểm ở local (chỉ đọc JSON và `last.pt`): khoá đúng cả 4; GPU RTX 5090, torch 2.14.1+cu130; cả 4 run cùng khởi tạo `a0b67247…`, nên cặp đúng. Tốc độ 2,8 / 3,1 phút/epoch (baseline / full), VRAM 3,3 GiB.
+
+     | val ×100 (baseline / full) | tốt nhất @epoch | TB epoch 11–20 | epoch 20 |
+     |---|---|---|---|
+     | fold 1 (5090) | 71.3 @5 / 73.0 @5 | 70.0 / 66.1 | 70.3 / 64.7 |
+     | fold 2 (5090) | 70.4 @4 / 71.2 @3 | 61.2 / 65.2 | 60.3 / 64.2 |
+     | fold 2 pilot (Colab L4) | 76.8 @1 / 74.9 @1 | 62.4 / 70.1 | 60.5 / 69.5 |
+
+     - `full − baseline` đổi dấu theo fold và theo cách đo: fold 1 là +1.7 ở điểm tốt nhất nhưng −3.9 ở TB 11–20; fold 2 là +0.7 và +4.0. Mới 1 seed, chưa kết luận gì.
+     - **Fold 2 là lần lặp lại pilot trên máy khác.**
+       - Loss train gần trùng: `wa` epoch 1 là 0.0591 / 0.0606 (pilot 0.0591 / 0.0603), `wa` epoch 20 là 0.0059 / 0.0072, trùng pilot.
+       - Val thì lệch: đỉnh lệch 6.4 / 3.7 điểm, TB 11–20 lệch 1.2 / 4.9 điểm.
+       - Như vậy, riêng nhiễu khởi tạo và nền tảng đã làm val 3 subject lệch cỡ 5 điểm. Chênh vài điểm giữa hai run đơn lẻ không mang thông tin.
+     - Đỉnh val rơi vào epoch 3–5 (pilot: epoch 1), nên E của refit là 5, 5, 4, 3. Tiêu chí "đỉnh sau epoch 2, `wa` không về 1e-05" đạt ở cả 4 run, trong khi chính cấu hình đó trượt ở pilot: tiêu chí này nhạy với nhiễu. Sau đỉnh, val vẫn giảm 1–10 điểm tới epoch 20.
+     - AU6 thấp nhất ở checkpoint được chọn (36–56).
+     - Fold 1 không so được với `runs_retry1`, vì val fold 1 đã đổi khi chuyển sang `splits_v2`.
 4. ~~Cell E~~ **XONG 21/11**: `stage2_decoder` chạy đúng trên 6 run cũ, chỉ val, mất khoảng 30 giây. Kết quả tóm tắt nằm ở đề cương §6 và không dùng để báo cáo. Trên val, `R0 − C0` chỉ từ +0.0 đến +0.9, trong khi C1 − C0 từ +1.5 đến +10.6.
 5. **Gói EMA + val 4 lần/epoch + LR backbone 0.1×** (code trên `main` từ `586b221`, cờ mặc định tắt): **không có bằng chứng có lợi, đề xuất không đưa vào cấu hình chính.** EMA và LR chưa tách được.
    - D2 (22/11): C0 khớp lúc train (68.53 / 68.16); C1 72.27 / 72.00 (tune trên chính val); `R0 − C0` = +0.26 / +0.04.

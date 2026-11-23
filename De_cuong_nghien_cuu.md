@@ -247,7 +247,7 @@ Phần này **không phụ thuộc vào việc có vượt điểm paper hay kh�
 |---|---|
 | Contrastive cải thiện so với baseline của chính mình | **chưa đạt**: hiện `full − baseline = −0.31` (1 seed) |
 | Tầng 2: `R0 − C0 > 0`, CI không chứa 0, mức +0.2 đến +0.5 | **chưa đạt**: lần đo thăm dò 13/11 (detector cũ) có R0 − C0 = +0.32 nhưng CI chứa 0 |
-| Hết quá khớp: `wa` không về 1e-05, val đạt đỉnh sau epoch 2 | **chưa đạt ở 9 run cũ** (`wa` → 0.0000, đỉnh val ở epoch 1–8, §2.4); **pilot 22/11 (fold 2, seed 0) vẫn chưa đạt**: `wa` 0.006–0.007 nhưng đỉnh val ở epoch 1 |
+| Hết quá khớp: `wa` không về 1e-05, val đạt đỉnh sau epoch 2 | **chưa đạt ở 9 run cũ** (`wa` → 0.0000, đỉnh val ở epoch 1–8, §2.4); **pilot 22/11 (fold 2, seed 0) vẫn chưa đạt**: `wa` 0.006–0.007 nhưng đỉnh val ở epoch 1. **4/18 run trên RTX 5090 (23/11, seed 0, fold 1–2) đạt**: `wa` cuối 0.004–0.007, đỉnh val ở epoch 3–5; sau đỉnh val vẫn giảm 1–10 điểm. Cùng cấu hình mà pilot trượt còn run này đạt, nên tiêu chí này nhạy với nhiễu |
 
 ### Mức tốt nhất
 
@@ -382,3 +382,9 @@ Chỉ một so sánh chính này được mở test. Các variant còn lại đ�
     - đầu ra mới ở `MyDrive/Sym/stage2_v2/`.
 13. **Cập nhật 22/11 — pilot và D2:** pilot vẫn đạt đỉnh ở epoch 1; gói EMA + LR không có bằng chứng có lợi; phát hiện rò rỉ khi chọn cấu hình chung trên inner val (§6, §7).
 14. **Khoá cấu hình 22/11:** cấu hình pilot, chỉ `baseline` và `full`, 18 run. Khoá sau khi đã nhìn val fold 2, và pilot trượt 1/3 tiêu chí: cả hai điều này phải công bố. Trước khi mở test còn phải quyết dòng (b) refit; điều kiện 3 seed đã chốt (§6); CI cho `full − baseline` đã code xong.
+15. **Cập nhật 23/11 — 18 run chuyển sang RTX 5090, xong 4/18:**
+    - Cả 18 run (a) và refit train trên một máy, vì hash khởi tạo khác Colab do CPU. Pilot trên L4 không thuộc 18 run.
+    - Seed 0, fold 1–2: khoá đúng, cặp khởi tạo đúng.
+    - Val tốt nhất 71.3 / 73.0 (fold 1) và 70.4 / 71.2 (fold 2), đỉnh ở epoch 3–5.
+    - Fold 2 lặp lại pilot: loss train gần trùng, nhưng val lệch tới khoảng 5 điểm. Đây là mức nhiễu giữa hai run đơn lẻ trên val 3 subject.
+    - `full − baseline` đổi dấu theo fold và cách đo. Chi tiết ở CLAUDE.md §7.
