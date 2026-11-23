@@ -169,16 +169,19 @@ def from_folder(src, data, lists_dir=None, lock=LOCK, ref=REFERENCE, tars=TARS, 
     say("== 1/4 List: tìm và đối chiếu mã băm")
     look = Path(lists_dir) if lists_dir else src
     (data / "list").mkdir(exist_ok=True)
-    bad = []
+    absent, differ = [], []
     for name, want in ref["lists"].items():
-        good = [p for p in look.rglob(name) if p.is_file() and sha256(p) == want]
+        cands = [p for p in look.rglob(name) if p.is_file()]
+        good = [p for p in cands if sha256(p) == want]
         if good:
             shutil.copyfile(good[0], data / "list" / name)
         else:
-            bad.append(name)
-    if bad:
-        raise SystemExit(f"{len(bad)} file list thiếu hoặc khác bản chuẩn trong {look}: {bad}\n"
-                         "Chép thư mục DISFA\\list từ máy cá nhân (12 file nhỏ) sang máy này rồi thêm --lists <thư mục đó>")
+            (differ if cands else absent).append(name)
+    if absent or differ:
+        raise SystemExit(f"List trong {look}: không thấy {len(absent)} file, {len(differ)} file có nhưng KHÁC bản chuẩn.\n"
+                         f"  không thấy: {absent}\n  khác: {differ}\n"
+                         "Chép thư mục DISFA\\list của máy cá nhân sang máy này: train_data_co_san.bat tự dùng D:\\LVTS_TriLe\\list; "
+                         "chạy tay thì thêm --lists <thư mục đó>")
 
     say("== 2/4 splits_v2: tạo lại từ list và đối chiếu với bản khoá")
     (data / "splits_v2").mkdir(exist_ok=True)

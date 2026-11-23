@@ -20,7 +20,7 @@ D:\LVTS_TriLe\Thesis_Sym\pc\windows\train_data_co_san.bat
 
   Cuối cùng chạy `check` và chạy thử 1 epoch.
 - **Lần chạy thứ hai trở đi:** train seed 2. Bị ngắt thì chạy lại file này để tiếp tục.
-- **List của nguồn khác bản chuẩn:** chép 12 file `DISFA\list` từ máy cá nhân vào `D:\LVTS_TriLe\list`, rồi bỏ chữ `rem` ở dòng `LISTS` trong file `.bat`.
+- **List của nguồn khác bản chuẩn** (đã gặp 23/11 với thư mục của Khang): chép thư mục `DISFA\list` của máy cá nhân (hoặc `LVTS_TriLe\sym_download\DISFA\list` trong gói) thành `D:\LVTS_TriLe\list`; file `.bat` tự nhận.
 - **Ảnh khác bản chuẩn:** file dừng ở subject đầu tiên bị lệch và không đánh dấu dữ liệu, nên không train được. Khi đó dùng gói `LVTS_TriLe` ở mục dưới.
 - **Mã băm chuẩn lấy từ ảnh ở máy cá nhân.** Muốn chắc chắn trùng bản trên Drive thì chạy thêm cell J (`Nhap_run_PC.ipynb`).
 

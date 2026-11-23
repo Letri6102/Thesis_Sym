@@ -5,8 +5,7 @@ rem Dat repo o D:\LVTS_TriLe\Thesis_Sym. Moi thu ghi vao D:\LVTS_TriLe (thu muc 
 rem Chay lai file nay de lam tiep: lan 1 cai dat + kiem du lieu + chay thu 1 epoch, lan 2 tro di train.
 set "SRC=D:\KLTN_Khang\DISFA_Data"
 set "SEEDS=2"
-rem Neu list trong SRC khac ban chuan: chep 12 file DISFA\list tu may ca nhan vao D:\LVTS_TriLe\list roi bo "rem" dong duoi
-rem set "LISTS=--lists D:\LVTS_TriLe\list"
+rem Neu list trong SRC khac ban chuan: chep thu muc DISFA\list cua may ca nhan thanh <thu muc lam viec>\list (file nay tu nhan).
 
 for %%I in ("%~dp0..\..") do set "REPO=%%~fI"
 for %%I in ("%REPO%\..") do set "ROOT=%%~fI"
@@ -38,7 +37,14 @@ nvidia-smi
 "%PYEXE%" %PYARG% pc\setup_env.py || goto :fail
 
 echo === 2/5 Du lieu: doi chieu va chep tu %SRC% (chi doc)
-"%VPY%" pc\train_18_run.py from-folder --src "%SRC%" --data "%DATA%" %LISTS% || goto :fail
+set "LISTDIR="
+if exist "%ROOT%\list\DISFA_train_img_path_fold1.txt" set "LISTDIR=%ROOT%\list"
+if defined LISTDIR (
+  echo Dung list tai %LISTDIR%
+  "%VPY%" pc\train_18_run.py from-folder --src "%SRC%" --data "%DATA%" --lists "%LISTDIR%" || goto :fail
+) else (
+  "%VPY%" pc\train_18_run.py from-folder --src "%SRC%" --data "%DATA%" || goto :fail
+)
 
 echo === 3/5 Kiem khoa
 "%VPY%" pc\train_18_run.py check --data "%DATA%" || goto :fail
