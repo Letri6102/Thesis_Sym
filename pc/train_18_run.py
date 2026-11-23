@@ -2,8 +2,8 @@
 
   <py> pc/train_18_run.py prepare --downloads <thư mục giải nén từ Drive> --data <DATA>
   <py> pc/train_18_run.py check   --data <DATA>
-  <py> pc/train_18_run.py smoke   --data <DATA>            # 1 epoch thử, KHÔNG thuộc 18 run
-  <py> pc/train_18_run.py train   --data <DATA> --seeds 2  # chạy lại là tiếp tục
+  <py> pc/train_18_run.py smoke   --data <DATA>                # 1 epoch thử mỗi variant, KHÔNG thuộc 18 run
+  <py> pc/train_18_run.py train   --data <DATA> --seeds 0 1 2  # chạy lại là tiếp tục (từ 23/11: cả 18 run ở máy này)
   <py> pc/train_18_run.py status
 
 <py> là python của .venv-pc (pc/setup_env.py). Kết quả nằm ở pc_runs/runs_aug1/; mỗi run xong được nén thành
@@ -35,6 +35,7 @@ WEIGHT_PREFIX = "19c8e357"
 N_IMAGES = 130814
 PILOT_INIT = "a6121dc9b5a8f905ef056e6263f54260d3e2b429562da63331db16551a0195f3"   # seed 0, in trong log pilot Colab
 PILOT_FULL_EP1 = .749                                                                # val F1 epoch 1 của pilot full fold 2 seed 0
+PILOT_BASE_EP1 = .768                                                                # như trên, baseline
 MIN_FREE_GB, BUSY_MIN = 15, 15
 LIST_PATTERN = re.compile(r"DISFA_(train|test)_(img_path|label|weight)_fold[123]\.txt")
 REFERENCE = json.loads((ROOT / "pc" / "data_reference.json").read_text(encoding="utf-8"))          # mã băm 12 list
@@ -395,6 +396,26 @@ def is_done(run, epochs):
     return n_epochs(run) >= epochs and all((run / n).exists() for n in ("config.json", "best.pt", "last.pt"))
 
 
+def init_hash(run):
+    """Hash khởi tạo train_contrastive ghi vào last.pt lúc tạo run (giữ nguyên qua resume)."""
+    import torch
+    try:
+        return torch.load(run / "last.pt", map_location="cpu", weights_only=False).get("initial_detector_hash")
+    except Exception:                                   # noqa: BLE001  (file hỏng cũng là lỗi cặp)
+        return None
+
+
+def pair_problem(runs, k, s, epochs):
+    """full − baseline chỉ là so cặp khi hai variant cùng fold/seed khởi tạo trùng nhau. Chưa đủ cặp thì chưa kiểm."""
+    rds = [Path(runs) / v / f"fold{k}" / f"seed{s}" for v in ("baseline", "full")]
+    if not all(is_done(rd, epochs) for rd in rds):
+        return None
+    a, b = (init_hash(rd) for rd in rds)
+    if a is None or a != b:
+        return f"fold{k}/seed{s}: baseline {str(a)[:12]}…, full {str(b)[:12]}…"
+    return None
+
+
 def pack(run, v, k, s, out, prefix="aug1"):
     """Nén một run xong thành zip để tải lên MyDrive/Sym/upload/ (cell I trên Colab giải nén và kiểm)."""
     up = Path(out) / "upload"
@@ -453,6 +474,10 @@ def train(data, seeds, folds=(1, 2, 3), out=OUT, lock=LOCK, old_session_dead=Fal
         bad = run_problems(rd, v, k, s, lock)
         if bad or not is_done(rd, epochs):
             raise SystemExit(f"{name} chưa xong hoặc lệch khoá: {bad}")
+        bad = pair_problem(runs, k, s, epochs)
+        if bad:
+            raise SystemExit(f"Hai variant cùng seed khởi tạo KHÁC nhau ({bad}): full − baseline không còn là so cặp. "
+                             "Dừng lại, gửi Claude log.")
         say(f"  xong → {pack(rd, v, k, s, out)}  (tải lên MyDrive/Sym/upload/)")
     say(f"\nXONG phần của máy này. Zip chờ tải lên: {sorted(p.name for p in (out / 'upload').glob('*.zip'))}")
 
@@ -481,28 +506,42 @@ def refit(data, seeds, folds=(1, 2, 3), out=OUT, lock=LOCK, old_session_dead=Fal
 
 # ---------------------------------------------------------------- smoke
 def smoke(data, out=OUT, lock=LOCK, keep=False, run=launch):
-    """1 epoch của full/fold2/seed0 (đúng run pilot đã có trên Colab) để so: hash khởi tạo phải trùng hệt,
-    val F1 epoch 1 phải gần pilot, và đo phút/epoch. Thư mục smoke không thuộc 18 run và bị xoá sau đó."""
-    rd = Path(out) / "smoke" / time.strftime("%Y%m%d_%H%M%S")
-    t0 = time.time()
-    text = run(train_cmd(data, "full", 2, 0, rd, lock, ["--stop-after", "1"]), Path(out) / "logs" / f"smoke_{rd.name}.log")
-    minutes = (time.time() - t0) / 60
-    init = re.search(r'"initial_detector_hash": "([0-9a-f]{64})"', text)
-    h = json.loads((rd / "history.json").read_text())
-    val = h[0]["val"]["macro_f1"]
-    problems = config_problems(json.loads((rd / "config.json").read_text(encoding="utf-8")), "full", 2, 0, lock)
-    if not keep:
-        shutil.rmtree(rd)
-    if problems:
-        raise SystemExit(f"Config của smoke lệch khoá: {problems}")
-    if not init or init[1] != PILOT_INIT:
-        raise SystemExit("Hash khởi tạo KHÁC pilot trên Colab: trọng số hoặc torch không khớp. Gửi Claude log smoke.")
-    say(f"\nSMOKE OK | khởi tạo trùng pilot | val F1 epoch 1 = {val:.3f} (pilot Colab {PILOT_FULL_EP1:.3f}, "
-        f"khác GPU nên lệch một chút là bình thường) | {minutes:.1f} phút, kể cả khởi động")
-    if abs(val - PILOT_FULL_EP1) > .05:
-        say("CẢNH BÁO: lệch pilot hơn 0.05 — có thể ảnh/list khác Drive. Gửi Claude log smoke trước khi train.")
-    say(f"Ước tính 1 run 20 epoch ≈ {20 * h[0]['seconds'] / 3600:.1f} giờ")
-    return dict(val=val, init=init[1], minutes=minutes)
+    """1 epoch baseline + 1 epoch full của fold2/seed0 (đúng cặp pilot trên Colab); thư mục smoke không thuộc 18 run
+    và bị xoá sau đó. Từ 23/11 cả 18 run train trên máy này, nên điều kiện chặn là: config đúng khoá, và hai variant
+    cùng seed khởi tạo trùng nhau trên máy này (so cặp). Hash khởi tạo khác pilot Colab chỉ được ghi lại: trọng số
+    ImageNet đã kiểm cùng file (19c8e357), code và thư viện đã khoá; phần còn lại là head khởi tạo ngẫu nhiên trên CPU,
+    lệch bit theo CPU và hệ điều hành (smoke 23/11 trên 5090: a0b67247…, Colab: a6121dc9…)."""
+    stamp, res = time.strftime("%Y%m%d_%H%M%S"), {}
+    for v in ("baseline", "full"):
+        rd = Path(out) / "smoke" / f"{stamp}_{v}"
+        t0 = time.time()
+        text = run(train_cmd(data, v, 2, 0, rd, lock, ["--stop-after", "1"]), Path(out) / "logs" / f"smoke_{rd.name}.log")
+        init = re.search(r'"initial_detector_hash": "([0-9a-f]{64})"', text)
+        h = json.loads((rd / "history.json").read_text())
+        problems = config_problems(json.loads((rd / "config.json").read_text(encoding="utf-8")), v, 2, 0, lock)
+        if not keep:
+            shutil.rmtree(rd)
+        if problems:
+            raise SystemExit(f"Config của smoke {v} lệch khoá: {problems}")
+        if not init:
+            raise SystemExit(f"Log smoke {v} không có initial_detector_hash: gửi Claude log smoke")
+        res[v] = dict(init=init[1], val=h[0]["val"]["macro_f1"], seconds=h[0]["seconds"], minutes=(time.time() - t0) / 60)
+    init = res["full"]["init"]
+    if res["baseline"]["init"] != init:
+        raise SystemExit("baseline và full cùng seed khởi tạo KHÁC nhau trên máy này: full − baseline không còn là so cặp. "
+                         "Gửi Claude log smoke.")
+    say(f"\nSMOKE OK | baseline và full cùng seed khởi tạo trùng nhau ({init[:12]}…)")
+    say(f"  khởi tạo {'TRÙNG' if init == PILOT_INIT else 'khác'} pilot Colab"
+        + ("" if init == PILOT_INIT else " — bình thường khi khác CPU; cả 18 run train trên máy này nên vẫn so cặp được"))
+    for v, ref in (("baseline", PILOT_BASE_EP1), ("full", PILOT_FULL_EP1)):
+        r = res[v]
+        say(f"  {v:>8}: val F1 epoch 1 = {r['val']:.3f} (pilot Colab {ref:.3f}; khác GPU nên lệch một chút là bình thường)"
+            f" | {r['minutes']:.1f} phút, kể cả khởi động")
+        if abs(r["val"] - ref) > .05:
+            say(f"  CẢNH BÁO: {v} lệch pilot hơn 0.05 — có thể ảnh/list khác Drive. Gửi Claude log smoke trước khi train.")
+    hours = 20 * max(r["seconds"] for r in res.values()) / 3600
+    say(f"Ước tính 1 run 20 epoch ≈ {hours:.1f} giờ; 18 run ≈ {18 * hours:.0f} giờ, chưa kể refit")
+    return dict(init=init, same_as_colab=init == PILOT_INIT, runs=res)
 
 
 def status(out=OUT, lock=LOCK):

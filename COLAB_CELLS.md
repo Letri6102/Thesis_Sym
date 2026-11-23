@@ -653,7 +653,7 @@ Có sẵn dạng notebook kèm Setup: [notebooks/Train_18_run.ipynb](notebooks/T
 - **Chạy lại là tiếp tục:** run xong thì bỏ qua, run dở thì resume. Run bị ngắt trong epoch 1 được cất sang `failed_runs/` rồi train lại (cell B không xử lý được ca này).
 - **Chặn:** run vừa được ghi dưới 15 phút (có thể phiên khác đang train), Drive trống dưới 12 GB.
 - Không evaluate test.
-- **Có máy GPU riêng (pc/README.md) thì phân công theo seed**: mặc định máy riêng lấy seed 2, Colab đặt `SEEDS = [0, 1]`. Hai máy không thấy tiến độ của nhau.
+- **Không chạy nữa (23/11):** chủ dự án chuyển cả 18 run sang máy 5090 (`pc/README.md`), để mọi run cùng một máy. Run cell G đã làm nằm ở `runs_aug1_colab/` sau khi đổi tên (xem cell I), không thuộc 18 run.
 
 ```python
 # ==== Cell G: cấu hình KHOÁ 22/11 — train cho đủ 18 run trong runs_aug1 (2 pilot đã xong + 16). KHÔNG đụng test ====
@@ -785,6 +785,7 @@ run_logged([sys.executable, '-u', '-m', 'stage2_decoder.contrast_ci', '--runs', 
 Có sẵn dạng notebook kèm Setup: [notebooks/Nhap_run_PC.ipynb](notebooks/Nhap_run_PC.ipynb). Máy riêng chạy `pc/train_18_run.py` và tạo `aug1_<variant>_fold<k>_seed<s>.zip` (run (a)) và `refit1_…zip` (dòng (b)); tải các zip này lên `MyDrive/Sym/upload/`. Zip refit chỉ được nhập khi run (a) tương ứng đã có trên Drive và E trùng epoch nó chọn.
 - Kiểm khoá từng run (config, hash code, thư viện, manifest, đủ 20 epoch, có `best.pt` và `last.pt`), rồi chép vào `runs_aug1/`.
 - **Không ghi đè** run đã đủ 20 epoch trên Drive. Không đụng run vừa được ghi dưới 15 phút (Colab có thể đang train).
+- **Không trộn máy (23/11):** cả 18 run (a) và refit đều train trên máy 5090. Zip train trên GPU khác GPU của run đã có trong `runs_aug1`/`runs_refit1` bị để lại trong `upload/`. **Trước lần nhập đầu tiên:** dừng cell G và K, đổi tên `MyDrive/Sym/runs_aug1` thành `runs_aug1_colab` (cả pilot L4 ở trong đó), và `runs_refit1` thành `runs_refit1_colab` nếu đã có. Đổi tên trong giao diện Drive là đủ; không xoá.
 - Zip đã xử lý được chuyển sang `upload/done/`, `upload/duplicate/` hoặc `upload/rejected/`. Chạy lại cell là xử lý tiếp phần còn lại.
 
 ```python
@@ -839,6 +840,11 @@ for z in zips:
     if not ok(run, v, k, s):
         print(f'  {z.name}: lệch khoá, chưa xong, hoặc thiếu run (a) tương ứng → KHÔNG nhập'); park(z, 'rejected'); continue
     gpu = json.loads((run / 'environment.json').read_text()).get('gpu')
+    mixed = sorted({json.loads(p.read_text()).get('gpu') or '?' for b in (RUNS, REFIT)
+                    for p in b.glob('*/fold*/seed*/environment.json') if p.parent != target} - {gpu})
+    if mixed:                                             # 23/11: cả 18 run (a) + refit phải train trên cùng một máy
+        print(f'  {z.name}: train trên {gpu}, nhưng Drive đã có run train trên {mixed} → để lại. '
+              f'Dừng cell G/K, đổi tên {RUNS.name} và {REFIT.name} cũ thành *_colab, rồi chạy lại cell'); continue
     if (target / 'config.json').exists():
         if ok(target, v, k, s):
             print(f'  {z.name}: Drive đã có run này hoàn chỉnh → giữ bản Drive, không ghi đè'); park(z, 'duplicate'); continue
@@ -943,7 +949,7 @@ print('\nKẾT QUẢ: ' + ('KHỚP 27/27: ảnh trong gói đúng bản trên Dr
 
 Chủ dự án chốt ngày 23/11. Mỗi run (a) đã xong được train lại trên **đủ 18 subject** outer-train (fit + inner val), với đúng công thức đã khoá, và dừng sau epoch E mà run (a) chọn trên inner val. Model refit là `last.pt`. Kết quả ghi vào `MyDrive/Sym/runs_refit1/`. Code ở `Contrastive_V1/refit/`, không đụng file bị hash.
 - Run (a) chưa xong thì bỏ qua, nên chạy lúc nào cũng được. Chạy lại cell là làm tiếp.
-- Mỗi run mất khoảng E × 10 phút trên L4. Máy GPU riêng tự refit seed của nó (`train_data_co_san.bat` chạy refit ngay sau train).
+- Mỗi run mất khoảng E × 10 phút trên L4. **Không chạy nữa (23/11):** máy 5090 tự refit cả 18 run (`train_data_co_san.bat` chạy refit ngay sau train).
 - Không evaluate test. Test của dòng (b) mở cùng lần với dòng (a).
 
 ```python

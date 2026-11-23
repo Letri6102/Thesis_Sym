@@ -112,10 +112,11 @@ Quy tắc cho mọi cell:
 - Tầng 2: nhánh chính là **R0** (luật dữ liệu, bias 0, λ chọn trên val); so sánh chính là `R0 − C0`. Bỏ R\* (20/11). C1/R1 (ngưỡng chỉnh trên 3 subject val) chỉ là nhánh phụ. `R_FACS` (5 luật viết tay) trả lời Q2a. Giai đoạn thiết kế chạy `--val-only`.
 - **KHOÁ cấu hình Tầng 1 (chủ dự án chốt 22/11):** đúng cấu hình pilot `runs_aug1`.
   - ResNet-50, aug mạnh, lr 1e-4, wd 5e-4, 20 epoch, batch 32, workers 4; không EMA, val 1 lần/epoch, LR backbone ×1.
-  - Chỉ `baseline` và `full`; 3 fold × seed 0/1/2 = 18 run, train bằng cell G (cell tự kiểm khoá code, manifest, thư viện).
+  - Chỉ `baseline` và `full`; 3 fold × seed 0/1/2 = 18 run, train bằng `pc/train_18_run.py` trên máy 5090 (từ 23/11; trước đó cell G). Cả hai tự kiểm khoá code, manifest, thư viện.
   - **Không sửa hay push file bị hash, không tune, không thêm variant cho tới khi đủ 18 run.**
-  - Phân công 23/11: máy RTX 5090 train **seed 2**, Colab train seed 0 và 1 (cell G với `SEEDS = [0, 1]`). Hai variant của cùng một seed phải train trên cùng một máy.
-  - Phải công bố trong luận văn: seed 2 train trên RTX 5090, seed 0/1 trên L4; pilot trượt tiêu chí "đỉnh sau epoch 2"; việc khoá diễn ra sau khi đã nhìn val fold 2 (chứa subject test của fold 1/3); aug được chọn 13/11, sau lần mở test thăm dò 29/10.
+  - **Phân công (chủ dự án đổi 23/11): máy RTX 5090 train cả 18 run (a) và 18 run refit** (`pc/windows/train_data_co_san.bat`, `SEEDS=0 1 2`). Colab không train Tầng 1 nữa (cell G, K dừng); run Colab đã làm (gồm 2 run pilot) chuyển sang `runs_aug1_colab/`, không thuộc 18 run. Cell I không nhập zip train trên GPU khác GPU của run đã có trên Drive.
+  - Hash khởi tạo trên máy 5090 (smoke 23/11: `a0b67247…`) khác pilot Colab (`a6121dc9…`) dù trọng số (`19c8e357`), code và thư viện trùng khoá: head khởi tạo ngẫu nhiên trên CPU lệch bit theo CPU/hệ điều hành. Vì vậy smoke và `train` kiểm cặp baseline = full **trên cùng máy**, không so với Colab.
+  - Phải công bố trong luận văn: cả 18 run (a) và refit train trên RTX 5090 (Windows); pilot dùng để khoá cấu hình train trên L4 (Colab) và có khởi tạo khác; pilot trượt tiêu chí "đỉnh sau epoch 2"; việc khoá diễn ra sau khi đã nhìn val fold 2 (chứa subject test của fold 1/3); aug được chọn 13/11, sau lần mở test thăm dò 29/10.
 - **Dòng (b) refit (chủ dự án chốt 23/11):** train lại mỗi run (a) đã xong trên **đủ 18 subject** outer-train (fit + inner val), cùng code và cấu hình đã khoá; lịch cosine 20 epoch giữ nguyên và dừng sau epoch E mà run (a) chọn trên inner val; model là `last.pt`; trọng số lớp của L_wa tính lại trên 18 subject. Code: `Contrastive_V1/refit/` (ngoài file bị hash), chạy bằng cell K (Colab) hoặc `pc/train_18_run.py refit`; kết quả ở `runs_refit1/`. Chỉ dòng (b) đặt cạnh 63.0; dòng (a) vẫn là kết quả chính.
 - Khi theo dõi loss, đọc các cột thô `global_con`/`node_con`/`cross_con` trong `history.json`. Không đọc `total`, vì cột này có nhân hệ số ramp.
 
@@ -136,7 +137,7 @@ Quy tắc cho mọi cell:
 
    - Dấu của `pilot − cũ`, `B2 − pilot`, `full − baseline` **đổi theo cách đo và theo variant**. 1 fold + 1 seed không xếp hạng được cấu hình; không gọi chênh vài điểm là cải thiện.
    - Val fold 2 (3 subject) **không so được** với 63.0 của paper (test, 3 fold).
-3. **ĐANG LÀM: train nốt 16 run.** Colab chạy seed 0/1 (cell G, `notebooks/Train_18_run.ipynb`); máy 5090 chạy seed 2 (`pc/train_18_run.py`; chưa chạy smoke trên máy đó), nhập về Drive bằng cell I. Gói `C:\CODE\Symbolic\LVTS_TriLe` dựng 23/11 từ code 4e610e2; chờ cell J. Đủ 18 run thì chạy Tầng 2 chỉ val (cell D, 3 fold × 3 seed).
+3. **ĐANG LÀM: train cả 18 run trên máy 5090** (đổi 23/11; `pc/windows/train_data_co_san.bat`, smoke chạy cả hai variant; 3,2 phút/epoch → khoảng 1,1 giờ/run, 18 run khoảng 20 giờ, chưa kể refit). Trước lần nhập đầu: dừng cell G/K, đổi tên `runs_aug1` → `runs_aug1_colab`. Phần cũ: Colab chạy seed 0/1 (cell G, `notebooks/Train_18_run.ipynb`); máy 5090 chạy seed 2 (`pc/train_18_run.py`; chưa chạy smoke trên máy đó), nhập về Drive bằng cell I. Gói `C:\CODE\Symbolic\LVTS_TriLe` dựng 23/11 từ code 4e610e2; chờ cell J. Đủ 18 run thì chạy Tầng 2 chỉ val (cell D, 3 fold × 3 seed).
 4. ~~Cell E~~ **XONG 21/11**: `stage2_decoder` chạy đúng trên 6 run cũ, chỉ val, mất khoảng 30 giây. Kết quả tóm tắt nằm ở đề cương §6 và không dùng để báo cáo. Trên val, `R0 − C0` chỉ từ +0.0 đến +0.9, trong khi C1 − C0 từ +1.5 đến +10.6.
 5. **Gói EMA + val 4 lần/epoch + LR backbone 0.1×** (code trên `main` từ `586b221`, cờ mặc định tắt): **không có bằng chứng có lợi, đề xuất không đưa vào cấu hình chính.** EMA và LR chưa tách được.
    - D2 (22/11): C0 khớp lúc train (68.53 / 68.16); C1 72.27 / 72.00 (tune trên chính val); `R0 − C0` = +0.26 / +0.04.

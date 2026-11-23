@@ -47,7 +47,7 @@ def toy_lock(splits=None):
     return lock
 
 
-def write_run(rd, v, k, s, lock, epochs=20, last=True, best=True, age_min=60, manifest_hash=None):
+def write_run(rd, v, k, s, lock, epochs=20, last=True, best=True, age_min=60, manifest_hash=None, init=None):
     rd.mkdir(parents=True, exist_ok=True)
     cfg = dict(CI.expected_config(v, k, s, lock), source_hashes={"toy.py": "0"})
     if manifest_hash:
@@ -56,7 +56,7 @@ def write_run(rd, v, k, s, lock, epochs=20, last=True, best=True, age_min=60, ma
     if epochs:
         (rd / "history.json").write_text(json.dumps(HIST[:epochs]))
     if last:
-        torch.save(dict(history=HIST), rd / "last.pt")
+        torch.save(dict(history=HIST, initial_detector_hash=init or PC.PILOT_INIT), rd / "last.pt")
     if best:
         (rd / "best.pt").write_bytes(b"x")
     (rd / "environment.json").write_text(json.dumps(dict(gpu="NVIDIA GeForce RTX 5090")))
@@ -69,7 +69,7 @@ def write_run(rd, v, k, s, lock, epochs=20, last=True, best=True, age_min=60, ma
             os.utime(p, (t, t))
 
 
-def fake_train(lock, calls, noop_resume=False):
+def fake_train(lock, calls, noop_resume=False, init=lambda v: PC.PILOT_INIT):
     def run(cmd, log):
         got = {}
         with patch("sys.argv", cmd[2:]), patch.object(TC, "train", lambda a: got.update(vars(a))):
@@ -82,8 +82,8 @@ def fake_train(lock, calls, noop_resume=False):
                 return ""
         else:
             assert not (out / "config.json").exists(), "train thật sẽ FileExistsError"
-        write_run(out, got["variant"], k, got["seed"], lock, age_min=0)
-        return '"initial_detector_hash": "' + PC.PILOT_INIT + '"'
+        write_run(out, got["variant"], k, got["seed"], lock, age_min=0, init=init(got["variant"]))
+        return '"initial_detector_hash": "' + init(got["variant"]) + '"'
     return run
 
 
@@ -181,13 +181,13 @@ def test_check_probe_reads_real_code_and_lists(tmp_path):
 
 
 # ---------------------------------------------------------------- train
-def queue(tmp_path, seeds=(2,), prepare_runs=None, noop_resume=False, lock=None, **kw):
+def queue(tmp_path, seeds=(2,), prepare_runs=None, noop_resume=False, lock=None, init=lambda v: PC.PILOT_INIT, **kw):
     lock, calls, out = lock or toy_lock(), [], tmp_path / "out"
     out.mkdir(parents=True, exist_ok=True)
     if prepare_runs:
         prepare_runs(out / "runs_aug1", lock)
     with redirect_stdout(io.StringIO()):
-        PC.train(tmp_path / "data", list(seeds), out=out, lock=lock, run=fake_train(lock, calls, noop_resume), **kw)
+        PC.train(tmp_path / "data", list(seeds), out=out, lock=lock, run=fake_train(lock, calls, noop_resume, init), **kw)
     return calls, out
 
 
@@ -235,17 +235,36 @@ def test_train_stops_before_damage(tmp_path, prep, msg):
         queue(tmp_path, prepare_runs=prep)
 
 
-def test_smoke_checks_init_hash_against_pilot(tmp_path):
+def test_train_all_seeds_on_one_machine(tmp_path):
+    calls, _ = queue(tmp_path, seeds=(0, 1, 2))
+    assert [(c["variant"], int(Path(c["manifest"]).stem[-1]), c["seed"]) for c in calls] == list(CI.jobs())
+
+
+def test_train_stops_when_pair_init_differs(tmp_path):
+    other = "1" * 64
+    with pytest.raises(SystemExit, match="khởi tạo KHÁC nhau"):
+        queue(tmp_path, init=lambda v: other if v == "full" else PC.PILOT_INIT)
+    assert not list((tmp_path / "out" / "upload").glob("aug1_full_*"))      # full lệch cặp: không nén để nhập
+
+
+def test_smoke_pairs_both_variants(tmp_path):
     lock, calls = toy_lock(), []
-    res = PC.smoke(tmp_path / "data", out=tmp_path / "out", lock=lock, run=fake_train(lock, calls))
-    assert res["init"] == PC.PILOT_INIT and calls[0]["stop_after"] == 1 and calls[0]["variant"] == "full"
+    with redirect_stdout(io.StringIO()):
+        res = PC.smoke(tmp_path / "data", out=tmp_path / "out", lock=lock, run=fake_train(lock, calls))
+    assert [(c["variant"], c["stop_after"], c["seed"]) for c in calls] == [("baseline", 1, 0), ("full", 1, 0)]
+    assert res["init"] == PC.PILOT_INIT and res["same_as_colab"]
     assert not list((tmp_path / "out" / "smoke").iterdir())          # thư mục thử đã xoá
 
-    def wrong(cmd, log):
-        fake_train(lock, [])(cmd, log)
-        return '"initial_detector_hash": "' + "0" * 64 + '"'
-    with pytest.raises(SystemExit, match="KHÁC pilot"):
-        PC.smoke(tmp_path / "data", out=tmp_path / "out", lock=lock, run=wrong)
+
+def test_smoke_accepts_other_machine_but_not_broken_pair(tmp_path):
+    lock, here = toy_lock(), "a" * 64                                  # khác Colab, nhưng hai variant trùng nhau
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        res = PC.smoke(tmp_path / "data", out=tmp_path / "out", lock=lock, run=fake_train(lock, [], init=lambda v: here))
+    assert res["init"] == here and not res["same_as_colab"] and "SMOKE OK" in buf.getvalue()
+    with pytest.raises(SystemExit, match="KHÁC nhau"), redirect_stdout(io.StringIO()):
+        PC.smoke(tmp_path / "data", out=tmp_path / "out", lock=lock,
+                 run=fake_train(lock, [], init=lambda v: here if v == "full" else PC.PILOT_INIT))
 
 
 # ---------------------------------------------------------------- cell I trên Colab
@@ -305,6 +324,22 @@ def test_cell_i_imports_and_never_overwrites(tmp_path):
     assert len(list((sym / "failed_runs").glob("aug1_full_fold3_seed2_*_truoc_nhap"))) == 1
     assert CI.run_problems(runs / "baseline" / "fold1" / "seed2", "baseline", 1, 2, lock) == []
     assert not list(runs.rglob("*.partial"))
+
+
+def test_cell_i_refuses_to_mix_machines(tmp_path):
+    """23/11: cả 18 run train trên máy 5090; Drive còn run Colab (L4) thì không nhập, để zip lại chờ đổi tên thư mục."""
+    lock = toy_lock()
+    up = made_zips(tmp_path, lock)
+
+    def colab_run(runs):
+        rd = runs / "baseline" / "fold2" / "seed0"
+        write_run(rd, "baseline", 2, 0, lock)
+        (rd / "environment.json").write_text(json.dumps(dict(gpu="NVIDIA L4")))
+    sym, log = import_zips(tmp_path, lock, colab_run)
+    assert len(list(up.glob("*.zip"))) == 6 and not (up / "done").exists() and "NVIDIA L4" in log
+    shutil.rmtree(sym / "runs_aug1")                                    # chủ dự án đổi tên thư mục Colab
+    sym, log = import_zips(tmp_path, lock)
+    assert len(list((up / "done").glob("*.zip"))) == 6
 
 
 def test_cell_i_rejects_drifted_or_unsafe_zips(tmp_path):

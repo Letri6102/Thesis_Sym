@@ -17,8 +17,8 @@ if not exist "%ROOT%\Thesis_Sym\pc\train_18_run.py" (
 )
 cd /d "%ROOT%\Thesis_Sym"
 
-rem Seed giao cho may nay. Colab chay cac seed con lai (cell G, SEEDS = [0, 1]). Khong de 2 may trung seed.
-set "SEEDS=2"
+rem 23/11: ca 18 run (a) + refit train tren may nay (seed 0 1 2).
+set "SEEDS=0 1 2"
 if not exist "%VPY%" (echo [LOI] Chua cai dat: chay 1_cai_dat.bat truoc & goto :fail)
 echo Train seed %SEEDS%. Bi ngat thi chay lai file nay: run do se resume.
 echo Ngat UltraViewer khong sao, nhung KHONG dong cua so nay va KHONG sign out may.

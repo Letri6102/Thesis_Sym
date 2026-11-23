@@ -19,7 +19,7 @@ D:\LVTS_TriLe\Thesis_Sym\pc\windows\train_data_co_san.bat
   - kiểm từng subject bằng SHA-256 tar trong `pc/bundle_tar_sha256.json`.
 
   Cuối cùng chạy `check` và chạy thử 1 epoch.
-- **Lần chạy thứ hai trở đi:** train seed 2. Bị ngắt thì chạy lại file này để tiếp tục.
+- **Lần chạy thứ hai trở đi:** train cả 18 run (seed 0 1 2), rồi refit. Bị ngắt thì chạy lại file này để tiếp tục.
 - **Nguồn chỉ có `img` + `ActionUnit_Labels` (data gốc, như thư mục của Khang):** `from-folder` tự sinh 12 list từ nhãn gốc bằng đúng logic script gốc (`Contrastive_V1/tool/DISFA_image_label_process.py`, fold part1/2/3) rồi đối chiếu mã băm. Không cần chép list.
 - **List của nguồn khác bản chuẩn** (đã gặp 23/11 với thư mục của Khang): chép thư mục `DISFA\list` của máy cá nhân (hoặc `LVTS_TriLe\sym_download\DISFA\list` trong gói) thành `D:\LVTS_TriLe\list`; file `.bat` tự nhận.
 - **Ảnh khác bản chuẩn:** file dừng ở subject đầu tiên bị lệch và không đánh dấu dữ liệu, nên không train được. Khi đó dùng gói `LVTS_TriLe` ở mục dưới.
@@ -32,17 +32,18 @@ D:\LVTS_TriLe\Thesis_Sym\pc\windows\train_data_co_san.bat
 2. **Trên Colab**, chạy cell J (notebook `Nhap_run_PC.ipynb`, cell cuối): phải báo `KHỚP 27/27`.
 3. **Chép nguyên thư mục** `LVTS_TriLe` sang máy GPU thành `D:\LVTS_TriLe` bằng tính năng truyền file của UltraViewer (khoảng 8,7 GB).
 4. **Trên máy GPU**, chạy `D:\LVTS_TriLe\1_cai_dat.bat`. File này dò Python, tạo môi trường, tải trọng số ImageNet chính thức, chạy `prepare`, `check`, `smoke`. Cache pip, file tạm và cache CUDA đều nằm trong `D:\LVTS_TriLe`.
-5. Smoke báo OK thì chạy `D:\LVTS_TriLe\2_train.bat` (mặc định seed 2; đổi dòng `set "SEEDS=2"` nếu phân công khác).
+5. Smoke báo OK thì chạy `D:\LVTS_TriLe\2_train.bat` (mặc định seed 0 1 2, tức cả 18 run).
 6. Zip kết quả nằm ở `D:\LVTS_TriLe\Thesis_Sym\pc_runs\upload\`: chép về máy cá nhân, kéo vào `MyDrive/Sym/upload/`, rồi chạy cell I.
 
 Cần khoảng 35 GB trống trên D: (gói 8,7 GB + ảnh giải nén 8,3 GB + môi trường khoảng 6 GB + run và zip). Sau khi `prepare` xong có thể xoá `D:\LVTS_TriLe\sym_download\DISFA_img` để lấy lại 8,7 GB.
 
 ## 0. Phân công — làm trước, tránh hai máy train trùng một run
 
-Mặc định: **máy 5090 lấy seed 2** (6 run). **Colab lấy seed 0 và 1**: khi chạy lại cell G, sửa thành `SEEDS = [0, 1]`.
+**Từ 23/11: máy 5090 train cả 18 run (a) và refit**, Colab không train Tầng 1 nữa (dừng cell G, K). Trước lần nhập đầu tiên bằng cell I: đổi tên `MyDrive/Sym/runs_aug1` → `runs_aug1_colab` (và `runs_refit1` → `runs_refit1_colab` nếu có). Cell I không nhập zip train trên GPU khác GPU của run đã có.
 
-- Nếu máy 5090 xong sớm, có thể nhận thêm run của seed 1 mà Colab **chưa bắt đầu**. Dùng `--seeds 1 --folds 3`, và sửa Colab tương ứng.
-- Hai máy không thấy tiến độ của nhau, nên phân công phải ghi rõ trước khi chạy.
+**Smoke** chạy 1 epoch baseline và 1 epoch full của fold 2/seed 0. Chặn khi config lệch khoá hoặc hai variant cùng seed khởi tạo khác nhau. Hash khởi tạo khác pilot Colab thì chỉ ghi lại: trọng số, code, thư viện đã kiểm trùng; phần khác là head khởi tạo ngẫu nhiên trên CPU. `train` cũng kiểm cặp này sau mỗi run full.
+
+- Phân công cũ (trước 23/11: máy 5090 seed 2, Colab seed 0/1) không dùng nữa.
 
 ## 1. Tải từ Google Drive (`MyDrive/Sym`) về máy 5090
 
@@ -106,21 +107,21 @@ Từ đây `<py>` là python của môi trường vừa tạo:
 <py> pc/train_18_run.py smoke --data D:\DISFA
 ```
 
-Lệnh chạy 1 epoch của `full/fold2/seed0`, tức đúng run pilot đã có trên Colab, rồi xoá thư mục thử. Đạt khi:
-- **hash khởi tạo trùng hệt pilot.** Nếu khác, dừng ngay và gửi Claude file log trong `pc_runs/logs/`;
-- **val F1 epoch 1 gần 0.749.** Khác GPU nên lệch một chút là bình thường; lệch hơn 0.05 sẽ có cảnh báo;
+Lệnh chạy 1 epoch của `baseline` và 1 epoch của `full` (fold 2/seed 0, đúng cặp pilot trên Colab), rồi xoá thư mục thử. Đạt khi:
+- **config đúng khoá, và hai variant khởi tạo trùng nhau trên máy này.** Nếu khác, dừng ngay và gửi Claude file log trong `pc_runs/logs/`. Hash khác pilot Colab chỉ được in ra (khác CPU), không chặn;
+- **val F1 epoch 1 gần pilot** (baseline 0.768, full 0.749). Khác GPU nên lệch một chút là bình thường; lệch hơn 0.05 sẽ có cảnh báo;
 - in ra số giờ ước tính cho một run.
 
 ## 6. Train
 
 ```bash
-<py> pc/train_18_run.py train --data D:\DISFA --seeds 2
+<py> pc/train_18_run.py train --data D:\DISFA --seeds 0 1 2
 <py> pc/train_18_run.py status
 ```
 
 - **Bị ngắt (mất mạng, tắt máy, Ctrl+C):** chạy lại đúng lệnh trên. Run dở sẽ resume; run bị ngắt ngay trong epoch 1 được cất sang `pc_runs/failed_runs/` rồi train lại.
 - **Trên Windows remote:** tắt chế độ ngủ của máy, và chạy trong cửa sổ không bị đóng khi ngắt Remote Desktop. Trên Linux thì chạy trong `tmux`.
-- **Refit (dòng b):** `train_data_co_san.bat` và `2_train.bat` tự chạy `refit` ngay sau `train`. Lệnh này train lại mỗi run trên đủ 18 subject và dừng ở epoch E mà run đó chọn, cho ra zip `refit1_*.zip`. Chạy tay: `<py> pc/train_18_run.py refit --data <DATA> --seeds 2`.
+- **Refit (dòng b):** `train_data_co_san.bat` và `2_train.bat` tự chạy `refit` ngay sau `train`. Lệnh này train lại mỗi run trên đủ 18 subject và dừng ở epoch E mà run đó chọn, cho ra zip `refit1_*.zip`. Chạy tay: `<py> pc/train_18_run.py refit --data <DATA> --seeds 0 1 2`.
 - **Đầu ra:** run nằm ở `pc_runs/runs_aug1/`, log ở `pc_runs/logs/`. Mỗi run xong được nén thành `pc_runs/upload/aug1_<variant>_fold<k>_seed<s>.zip` (khoảng 0,7 GB).
 
 ## 7. Đưa kết quả về Drive
@@ -132,4 +133,4 @@ Lệnh chạy 1 epoch của `full/fold2/seed0`, tức đúng run pilot đã có 
    - chuyển zip đã xử lý sang `upload/done/` (đã nhập), `upload/duplicate/` (Drive đã có) hoặc `upload/rejected/` (lệch khoá).
 3. Chỉ xoá zip trên máy 5090 sau khi cell I đã báo `ĐÃ NHẬP`.
 
-**Ghi trong luận văn:** run seed 2 train trên RTX 5090, seed 0/1 trên L4. GPU đã được ghi trong `environment.json` của từng run. `full − baseline` được so trong cùng seed, nên hai variant của cùng một seed phải train trên cùng một máy: phân công theo seed đảm bảo điều này.
+**Ghi trong luận văn:** cả 18 run (a) và refit train trên RTX 5090 (Windows); pilot dùng để khoá cấu hình train trên L4 (Colab) và có khởi tạo khác. GPU đã được ghi trong `environment.json` của từng run. `full − baseline` được so trong cùng seed; mọi run train trên một máy nên hai variant cùng seed có cùng khởi tạo (smoke và `train` kiểm điều này).
