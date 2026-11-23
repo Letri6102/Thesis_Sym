@@ -126,7 +126,7 @@ Lệnh chạy 1 epoch của `baseline` và 1 epoch của `full` (fold 2/seed 0, 
 
 ## 6b. Xem tiến độ: % hoàn thành và giờ xong dự kiến
 
-- **Bấm là xem:** nháy đúp `D:\LVTS_TriLe\Thesis_Sym\pc\windows	heo_doi.bat`. Cửa sổ làm mới mỗi 60 giây, chỉ đọc, đóng lúc nào cũng được; không ảnh hưởng train đang chạy.
+- **Bấm là xem:** nháy đúp `D:\LVTS_TriLe\Thesis_Sym\pc\windows\theo_doi.bat`. Cửa sổ làm mới mỗi 60 giây, chỉ đọc, đóng lúc nào cũng được; không ảnh hưởng train đang chạy.
   - Hiện ba thanh tiến độ: (a), refit, tổng. Kèm số run đã xong, run đang chạy (epoch, % của epoch), giờ xong run đó, giờ xong (a) và giờ xong cả refit.
   - Thời gian còn lại tính theo tốc độ đo được trên chính máy này. E của refit chỉ biết khi run (a) tương ứng xong; trước đó lấy trung bình các E đã biết.
   - Không run nào ghi log trong 15 phút thì báo train có thể đang dừng.
