@@ -982,6 +982,37 @@ drive.flush_and_unmount()
 
 ---
 
+## L. Chạy tổng hợp CHỈ VAL — Tầng 1 → Tầng 2 → một bảng (GPU, sau Setup với `IMAGES = True`)
+
+Có sẵn dạng notebook một file: [notebooks/Tong_hop_val.ipynb](notebooks/Tong_hop_val.ipynb) (Setup → cell I nhập zip mới → cell L). Chủ dự án chốt 23/11: kết quả tổng thể đo **chỉ trên inner val**; test vẫn mở một lần sau khi đủ 18 run.
+- Không train thêm: Tầng 1 là các run đã có trong `runs_aug1`, train trên máy 5090.
+- Với mỗi run đủ 20 epoch: `evaluate --split val` bằng `best.pt` (bỏ qua nếu đã có), rồi Tầng 2 chỉ val (C0, C1, R0, R1, R_FACS). Run chưa có thì bỏ qua, nên chạy lại cell khi có thêm run.
+- Bảng in ra và ghi vào `MyDrive/Sym/stage2_v2/val_overview.json` gồm: từng run, trung bình theo variant, `R0 − C0`, `full − baseline` theo cặp cùng fold và seed, F1 từng AU.
+- λ và ngưỡng C1 được chọn trên chính val, nên các số này chỉ để xem chiều hướng: **không báo cáo, không so với 63.0**.
+- Chặn khi `runs_aug1` có run từ hai máy (chưa đổi tên thư mục Colab cũ thành `runs_aug1_colab`).
+- Mỗi run mất khoảng 2–3 phút (evaluate val) cộng 30 giây (Tầng 2).
+
+```python
+# ==== Cell L: CHẠY TỔNG HỢP — run Tầng 1 đã có → evaluate val → Tầng 2 → một bảng. CHỈ VAL, không đụng test ====
+if not os.path.isdir('/content/drive/MyDrive'):            # cell I tháo Drive ở cuối
+    drive.mount('/content/drive')
+assert str(DATA).startswith('/content/'), 'evaluate val cần ảnh trong /content: chạy Setup với IMAGES = True'
+assert RUNS.name == 'runs_aug1', f'RUNS phải là runs_aug1, đang là {RUNS}'
+gpus = {json.loads(p.read_text()).get('gpu') or '?' for p in RUNS.glob('*/fold*/seed*/environment.json')}
+assert len(gpus) <= 1, (f'runs_aug1 có run từ nhiều máy {sorted(gpus)}: đổi tên runs_aug1 cũ (Colab) thành '
+                        'runs_aug1_colab, rồi nhập lại zip của máy 5090 bằng cell I')
+STAGE2 = SYM / 'stage2_v2'
+run_logged([sys.executable, '-u', '-m', 'stage2_decoder.run_all', '--runs', RUNS, '--splits', SPLITS,
+            '--data-root', DATA, '--output', STAGE2, '--variants', 'baseline', 'full',
+            '--folds', 1, 2, 3, '--seeds', 0, 1, 2, '--val-only'], 'tong_hop_stage2_val')
+run_logged([sys.executable, '-u', '-m', 'stage2_decoder.val_overview', '--runs', RUNS,
+            '--results', STAGE2 / 'results', '--output', STAGE2 / 'val_overview.json'], 'tong_hop_bang_val')
+print('Bảng đã ghi vào', STAGE2 / 'val_overview.json', flush=True)
+drive.flush_and_unmount()
+```
+
+---
+
 ## Phụ lục
 
 **Kéo log và kết quả về máy để phân tích** (bỏ ảnh, nhãn gốc, trọng số):

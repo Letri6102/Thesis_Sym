@@ -81,7 +81,7 @@ Contrastive_V1/remote_stage2/ script cho máy remote (runs_retry1, splits cũ) �
 MultiviewSymAU-master/       bản cài đặt lại SymGraphAU (Stage 2/3 cũ) để đối chiếu
 Tang2_Decoder.ipynb          Tầng 2 bản notebook 13/11 — LỖI THỜI, lệch đề cương; dùng stage2_decoder
 De_cuong_nghien_cuu.md       đề cương bản 2
-notebooks/                   Train_18_run.ipynb (Setup + cell G), Nhap_run_PC.ipynb (Setup + cell I), Bao_cao_log.ipynb (cell F) — bản đang dùng
+notebooks/                   Tong_hop_val.ipynb (Setup + cell I + cell L: tổng hợp chỉ val), Nhap_run_PC.ipynb (Setup + cell I), Bao_cao_log.ipynb (cell F) — bản đang dùng; Train_18_run.ipynb (cell G, K) không chạy nữa
 pc/                          train trên máy GPU riêng: setup_env.py, train_18_run.py (prepare/check/smoke/train/status), make_bundle.py + windows/*.bat (gói một thư mục), README.md
 CONTEXT.md                   baseline SymGraphAU (paper), số cần vượt, đối chiếu pipeline, hướng cải tiến
 ```
@@ -167,6 +167,7 @@ Quy tắc cho mọi cell:
        - 18 run refit: mỗi run dừng ở epoch E đã chọn, khoảng 10–20 phút/run.
        - Colab không train nữa. Việc của Colab: nhập zip (cell I), kiểm đủ khoá (cell H), cell D chỉ val (evaluate val rồi Tầng 2), sau đó là cell mở test (chưa viết).
        - `stage2_decoder.run_all` tự cất kết quả decode làm từ checkpoint khác (ví dụ của pilot) sang `stage2_v2/stale/` rồi decode lại.
+     - **Kết quả tổng thể = chỉ val (chủ dự án chốt 23/11).** Dùng `notebooks/Tong_hop_val.ipynb`: Setup, rồi cell I, rồi cell L (evaluate val, Tầng 2, bảng `stage2_decoder.val_overview` ghi vào `stage2_v2/val_overview.json`). Chạy được khi mới có một phần run, và chạy lại khi có thêm. Không mở test. Không dùng Stage 2/3 của SymGraphAU (Q2b vẫn là tuỳ chọn).
 4. ~~Cell E~~ **XONG 21/11**: `stage2_decoder` chạy đúng trên 6 run cũ, chỉ val, mất khoảng 30 giây. Kết quả tóm tắt nằm ở đề cương §6 và không dùng để báo cáo. Trên val, `R0 − C0` chỉ từ +0.0 đến +0.9, trong khi C1 − C0 từ +1.5 đến +10.6.
 5. **Gói EMA + val 4 lần/epoch + LR backbone 0.1×** (code trên `main` từ `586b221`, cờ mặc định tắt): **không có bằng chứng có lợi, đề xuất không đưa vào cấu hình chính.** EMA và LR chưa tách được.
    - D2 (22/11): C0 khớp lúc train (68.53 / 68.16); C1 72.27 / 72.00 (tune trên chính val); `R0 − C0` = +0.26 / +0.04.
