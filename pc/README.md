@@ -2,6 +2,18 @@
 
 Máy này chỉ **train** một phần của bộ 18 run, với đúng cấu hình đã khoá ngày 22/11 (CLAUDE.md §6). Evaluate, Tầng 2 và mở test vẫn làm trên Colab. Mọi bước đều kiểm khoá: code, phiên bản thư viện, manifest, trọng số, ảnh. Lệch một thứ là dừng, không train.
 
+## Máy Windows chỉ được dùng một thư mục (D:\LVTS_TriLe, UltraViewer) — cách đang dùng 23/11
+
+1. **Ở máy cá nhân**, dựng gói (đã dựng sẵn tại `C:\CODE\Symbolic\LVTS_TriLe`):
+   `<py> pc/make_bundle.py --splits <thư mục splits_v2> --out C:\CODE\Symbolic\LVTS_TriLe`
+2. **Trên Colab**, chạy cell J (notebook `Nhap_run_PC.ipynb`, cell cuối): phải báo `KHỚP 27/27`.
+3. **Chép nguyên thư mục** `LVTS_TriLe` sang máy GPU thành `D:\LVTS_TriLe` bằng tính năng truyền file của UltraViewer (khoảng 8,7 GB).
+4. **Trên máy GPU**, chạy `D:\LVTS_TriLe\1_cai_dat.bat`. File này dò Python, tạo môi trường, tải trọng số ImageNet chính thức, chạy `prepare`, `check`, `smoke`. Cache pip, file tạm và cache CUDA đều nằm trong `D:\LVTS_TriLe`.
+5. Smoke báo OK thì chạy `D:\LVTS_TriLe\2_train.bat` (mặc định seed 2; đổi dòng `set "SEEDS=2"` nếu phân công khác).
+6. Zip kết quả nằm ở `D:\LVTS_TriLe\Thesis_Sym\pc_runs\upload\`: chép về máy cá nhân, kéo vào `MyDrive/Sym/upload/`, rồi chạy cell I.
+
+Cần khoảng 35 GB trống trên D: (gói 8,7 GB + ảnh giải nén 8,3 GB + môi trường khoảng 6 GB + run và zip). Sau khi `prepare` xong có thể xoá `D:\LVTS_TriLe\sym_download\DISFA_img` để lấy lại 8,7 GB.
+
 ## 0. Phân công — làm trước, tránh hai máy train trùng một run
 
 Mặc định: **máy 5090 lấy seed 2** (6 run). **Colab lấy seed 0 và 1**: khi chạy lại cell G, sửa thành `SEEDS = [0, 1]`.

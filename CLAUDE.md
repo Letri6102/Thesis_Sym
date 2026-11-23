@@ -13,6 +13,7 @@ Mỗi backbone phải so với số của chính backbone đó.
 
 - **Không train, evaluate hay chạy Tầng 2 ở máy local.** Mọi thứ đụng tới dataset hoặc GPU đều chạy trên **Google Colab** qua notebook.
   - **Ngoại lệ (chủ dự án mở 23/11):** được **train** run của bộ 18 run trên máy GPU riêng (RTX 5090, remote), chỉ bằng `pc/train_18_run.py` (hướng dẫn `pc/README.md`), cùng khoá. Kết quả nhập vào Drive bằng cell I. Evaluate, Tầng 2 và mở test vẫn chỉ trên Colab. Máy dev hiện tại (RTX 5060 Ti) không phải máy train.
+  - Máy 5090 chỉ được dùng thư mục `D:\LVTS_TriLe`, truy cập qua UltraViewer, không đăng nhập Drive. Gói chép sang dựng bằng `pc/make_bundle.py`, ảnh lấy từ `img/` ở máy cá nhân. **Chỉ train khi cell J báo `KHỚP 27/27`** (SHA-256 tar so với `DISFA_img` trên Drive; số ghi ở `pc/bundle_tar_sha256.json`).
 - **Mọi code đều phải commit và push lên GitHub** (`Letri6102/Thesis_Sym`, nhánh `main`). Notebook Colab lấy code từ git, **không** đọc code từ Drive.
 - **Dataset và kết quả chạy vẫn nằm trên Google Drive** (`MyDrive/Sym`) như cũ. Không đưa data, trọng số hay kết quả lên git.
 - Ở local chỉ được: sửa code, chạy unit test nhẹ (`Contrastive_V1/.venv-tests`, `pytest tests`), đọc log và kết quả đã kéo từ Drive về để phân tích.
@@ -78,7 +79,7 @@ MultiviewSymAU-master/       bản cài đặt lại SymGraphAU (Stage 2/3 cũ) 
 Tang2_Decoder.ipynb          Tầng 2 bản notebook 13/11 — LỖI THỜI, lệch đề cương; dùng stage2_decoder
 De_cuong_nghien_cuu.md       đề cương bản 2
 notebooks/                   Train_18_run.ipynb (Setup + cell G), Nhap_run_PC.ipynb (Setup + cell I), Bao_cao_log.ipynb (cell F) — bản đang dùng
-pc/                          train trên máy GPU riêng: setup_env.py, train_18_run.py (prepare/check/smoke/train/status), README.md
+pc/                          train trên máy GPU riêng: setup_env.py, train_18_run.py (prepare/check/smoke/train/status), make_bundle.py + windows/*.bat (gói một thư mục), README.md
 CONTEXT.md                   baseline SymGraphAU (paper), số cần vượt, đối chiếu pipeline, hướng cải tiến
 ```
 
@@ -129,7 +130,7 @@ Quy tắc cho mọi cell:
 
    - Dấu của `pilot − cũ`, `B2 − pilot`, `full − baseline` **đổi theo cách đo và theo variant**. 1 fold + 1 seed không xếp hạng được cấu hình; không gọi chênh vài điểm là cải thiện.
    - Val fold 2 (3 subject) **không so được** với 63.0 của paper (test, 3 fold).
-3. **ĐANG LÀM: train nốt 16 run.** Colab chạy seed 0/1 (cell G, `notebooks/Train_18_run.ipynb`); máy 5090 chạy seed 2 (`pc/train_18_run.py`; chưa chạy smoke trên máy đó), nhập về Drive bằng cell I. Đủ 18 run thì chạy Tầng 2 chỉ val (cell D, 3 fold × 3 seed).
+3. **ĐANG LÀM: train nốt 16 run.** Colab chạy seed 0/1 (cell G, `notebooks/Train_18_run.ipynb`); máy 5090 chạy seed 2 (`pc/train_18_run.py`; chưa chạy smoke trên máy đó), nhập về Drive bằng cell I. Gói `C:\CODE\Symbolic\LVTS_TriLe` dựng 23/11 từ code 4e610e2; chờ cell J. Đủ 18 run thì chạy Tầng 2 chỉ val (cell D, 3 fold × 3 seed).
 4. ~~Cell E~~ **XONG 21/11**: `stage2_decoder` chạy đúng trên 6 run cũ, chỉ val, mất khoảng 30 giây. Kết quả tóm tắt nằm ở đề cương §6 và không dùng để báo cáo. Trên val, `R0 − C0` chỉ từ +0.0 đến +0.9, trong khi C1 − C0 từ +1.5 đến +10.6.
 5. **Gói EMA + val 4 lần/epoch + LR backbone 0.1×** (code trên `main` từ `586b221`, cờ mặc định tắt): **không có bằng chứng có lợi, đề xuất không đưa vào cấu hình chính.** EMA và LR chưa tách được.
    - D2 (22/11): C0 khớp lúc train (68.53 / 68.16); C1 72.27 / 72.00 (tune trên chính val); `R0 − C0` = +0.26 / +0.04.

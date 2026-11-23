@@ -410,3 +410,13 @@ def test_bundle_refuses_inconsistent_inputs(tmp_path, how, msg):
         (root / "img" / "SN003" / "1.png").unlink()
     with pytest.raises(SystemExit, match=msg):
         MB.build(root / "img", root / "list", splits, tmp_path / "out", lock=lock, n_images=18)
+
+
+def test_cell_j_checks_exactly_the_recorded_bundle():
+    rec = json.loads((REPO / "pc" / "bundle_tar_sha256.json").read_text(encoding="utf-8"))
+    nb = json.loads((REPO / "notebooks" / "Nhap_run_PC.ipynb").read_text(encoding="utf-8"))
+    cell = "".join(nb["cells"][-1]["source"])
+    assert cell.startswith("# ==== Cell J") and cell in (REPO / "COLAB_CELLS.md").read_text(encoding="utf-8")
+    ns = {}
+    exec("EXPECT = " + cell.split("EXPECT = ", 1)[1].split("\n}\n", 1)[0] + "\n}", ns)
+    assert ns["EXPECT"] == {s: (d["size"], d["sha256"]) for s, d in rec["tars"].items()} and len(rec["tars"]) == 27

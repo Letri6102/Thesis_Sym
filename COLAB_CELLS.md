@@ -855,6 +855,76 @@ drive.flush_and_unmount()
 
 ---
 
+## J. Đối chiếu ảnh của gói `LVTS_TriLe` với Drive — CPU, khoảng 10 phút, không cần Setup
+
+Gói chép sang máy GPU riêng (`pc/make_bundle.py`) lấy ảnh từ `img/` ở máy cá nhân, không lấy từ Drive. Tar trong gói được dựng **đúng định dạng cell A**, nên ảnh giống hệt thì tar cũng trùng từng byte. Cell này so SHA-256 của 27 tar trên Drive với số của gói.
+**Chỉ được train trên máy GPU khi cell báo `KHỚP 27/27`.** Nếu khác: tải `DISFA_img/` từ Drive, thay thư mục `sym_download/DISFA_img` trong gói, rồi chạy lại `1_cai_dat.bat`.
+
+```python
+# ==== Cell J: đối chiếu 27 tar của gói LVTS_TriLe (dựng từ img/ ở máy cá nhân) với DISFA_img trên Drive — CPU, không cần Setup ====
+import os, json, hashlib, subprocess
+from pathlib import Path
+from google.colab import drive
+
+if not os.path.isdir('/content/drive/MyDrive'):
+    drive.mount('/content/drive')
+SRC, TMP = Path('/content/drive/MyDrive/Sym/DISFA_img'), Path('/content/tar_check')
+TMP.mkdir(exist_ok=True)
+EXPECT = {                                  # pc/bundle_tar_sha256.json, gói dựng từ code 4e610e2
+    'SN001': (338176000, '393a2000c5f22dcb42d78d9b25a2e585f03ed1a13c676a287426331f0f353c93'),
+    'SN002': (369029120, 'e8a01a3d749473be3ff95b55b05a88ec697bb4be651ef6ebd96ee2bdbf40fb16'),
+    'SN003': (340551680, 'b8c52330619371cdf378090667309791b792aa7260580c77b3d2853c27a82f3a'),
+    'SN004': (347494400, 'cda7a8a30e0860a288f6512ea2f116c14f71337479e8bc14369b53f562bf3191'),
+    'SN005': (310538240, 'e523ed014ea8d5571f5598b1848f2f54f3c13823cd3e96f9ae1a04c97daaddbd'),
+    'SN006': (313845760, 'e5b98bc6dc59eb80f259cc29bf4ac4a1189f9de52a92a168cba03eb701905ff2'),
+    'SN007': (302182400, '45b100926ab2bf42850cc8846b2d32e3fafb9446bb543caad6ef6cb2bd1de7c4'),
+    'SN008': (316416000, '9ce9036866b3a1699d912b99fb2527db616e52dfc4b280468623a89852cb4168'),
+    'SN009': (323205120, 'aaca676e856301459ddc438c67ba215e621df72d16044d04e5a13ea6a2863d72'),
+    'SN010': (320337920, '7d6489c3e27abf2af1892062a708d46571a16290bd740e5097be4d3a641d32a3'),
+    'SN011': (330147840, '7fd49d6fed1cbba84d366d78dd16bbabe2da29085963f33decdfb50c521fd019'),
+    'SN012': (370083840, '4995de042323479ea59863c53536c18c6d60e8706b897ce02ace7aefc8ab4072'),
+    'SN013': (306667520, '3f879b0edd53c6a1597595d46f96c9a90c5206cf67908dca06eb43411c01bd0e'),
+    'SN016': (379463680, 'd5137b37fbf4697f3311282e133571edc227bd8eaddb1898034b3d405df8e0c2'),
+    'SN017': (324300800, '46a946bbe3a79ac35cee0993a96e2815f54050d10f413c69151d1b8edc35dbfa'),
+    'SN018': (358594560, '21cbc64024545cfa25481d40adb4081481de230926e23d3df27d31dd0b998a0a'),
+    'SN021': (296212480, 'b6aefa68d5aebf2358dad6838221b4bb7f12e27f9b097813ec1a44aa0b518484'),
+    'SN023': (292945920, '13403558a95a7233506f80acd9f758010493a2b0b727fc629d57d640a29e2027'),
+    'SN024': (315494400, '773b8c9390d7c58b00f94c650e895061f7e5ced2649d2f5c797c0172e99dc3fb'),
+    'SN025': (307333120, 'b62af11e89c14e4cea1a8a7a4d3b32987fa347f9b5428e3719e39d9820f91e7f'),
+    'SN026': (301824000, 'b8ad68fa146c0292f80ccfb15952c0bb41b494a3043329be3ed59f19b2d3a18a'),
+    'SN027': (290570240, '270d34064cdae28a227755f81f5fbb72f95049218e680429d5c119d13e65c70e'),
+    'SN028': (309800960, 'b049cae37e948e47d8aa47dadb9f664c6a08ccd72cc8ae7d1877967c9a372beb'),
+    'SN029': (304179200, '5db9d64ff0eb49ae84e2adb9cba3a5764a76fce053c9f86389e894e27c52cb18'),
+    'SN030': (266752000, '31617046c885f52da5a4d73f88665c5ecf106417002dc8abb8408ce24fce92ec'),
+    'SN031': (313640960, '796902bef88cee76bcfd20e428d740882dea267ca6823794cf1a7375ed4a07dc'),
+    'SN032': (302254080, '7743fe12496dcf9a7a18f1a5005fb954ce7855fd4811789262fac41ddaaee215'),
+}
+
+def sha256(p):
+    h = hashlib.sha256()
+    with open(p, 'rb') as f:
+        for chunk in iter(lambda: f.read(1 << 20), b''):
+            h.update(chunk)
+    return h.hexdigest()
+
+assert sorted(json.loads((SRC / 'DONE.json').read_text())['subjects']) == sorted(EXPECT), 'Danh sách subject khác'
+bad = []
+for i, (s, (size, want)) in enumerate(sorted(EXPECT.items()), 1):
+    if json.loads((SRC / f'{s}.json').read_text())['size'] != size:
+        bad.append(s); print(f'{i:>2}/27 {s}: KHÁC (kích thước)', flush=True); continue
+    local = TMP / f'{s}.tar'
+    subprocess.run(['cp', str(SRC / f'{s}.tar'), str(local)], check=True, timeout=1800)   # đọc Drive có timeout
+    got = sha256(local)
+    local.unlink()
+    print(f'{i:>2}/27 {s}: ' + ('KHỚP' if got == want else 'KHÁC'), flush=True)
+    if got != want:
+        bad.append(s)
+print('\nKẾT QUẢ: ' + ('KHỚP 27/27: ảnh trong gói đúng bản trên Drive, máy GPU được train.' if not bad
+                       else f'KHÁC ở {bad}: KHÔNG train bằng gói này, báo Claude.'))
+```
+
+---
+
 ## Phụ lục
 
 **Kéo log và kết quả về máy để phân tích** (bỏ ảnh, nhãn gốc, trọng số):
