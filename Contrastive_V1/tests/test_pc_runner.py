@@ -31,6 +31,7 @@ def load(name):
 
 
 PC, SETUP = load("train_18_run"), load("setup_env")
+DS = {}                                     # bộ list + splits nhỏ cho cell I, mỗi tmp_path một bộ
 HIST = [dict(epoch=e, val=dict(macro_f1=.75), seconds=60.) for e in range(1, 21)]
 
 
@@ -45,9 +46,12 @@ def toy_lock(splits=None):
     return lock
 
 
-def write_run(rd, v, k, s, lock, epochs=20, last=True, best=True, age_min=60):
+def write_run(rd, v, k, s, lock, epochs=20, last=True, best=True, age_min=60, manifest_hash=None):
     rd.mkdir(parents=True, exist_ok=True)
-    (rd / "config.json").write_text(json.dumps(dict(CI.expected_config(v, k, s, lock), source_hashes={"toy.py": "0"})))
+    cfg = dict(CI.expected_config(v, k, s, lock), source_hashes={"toy.py": "0"})
+    if manifest_hash:
+        cfg["manifest_hash"] = manifest_hash
+    (rd / "config.json").write_text(json.dumps(cfg))
     if epochs:
         (rd / "history.json").write_text(json.dumps(HIST[:epochs]))
     if last:
@@ -252,6 +256,7 @@ def cell_i():
 
 
 def import_zips(tmp_path, lock, prepare_drive=None):
+    ds_root, ds_splits = DS.get(tmp_path) or DS.setdefault(tmp_path, small_dataset(tmp_path / "ds"))
     sym = tmp_path / "Sym"
     runs = sym / "runs_aug1"
     runs.mkdir(parents=True, exist_ok=True)
@@ -266,7 +271,7 @@ def import_zips(tmp_path, lock, prepare_drive=None):
         else:
             raise AssertionError(cmd)
     code = cell_i().replace("Path('/content/pc_import')", f"Path(r'{tmp_path / 'work'}')")
-    ns = dict(SYM=sym, RUNS=runs, CODE=REPO / "Contrastive_V1", json=json, sys=__import__("sys"), time=time,
+    ns = dict(SYM=sym, RUNS=runs, SPLITS=ds_splits, DATA=ds_root, CODE=REPO / "Contrastive_V1", json=json, sys=__import__("sys"), time=time,
               shutil=shutil, Path=Path, subprocess=types.SimpleNamespace(run=run),
               drive=types.SimpleNamespace(flush_and_unmount=lambda: None))
     with patch.object(CI, "LOCK", lock), redirect_stdout(io.StringIO()) as buf:
@@ -518,3 +523,67 @@ def test_one_file_runner_bat():
     for step in (r'set "SRC=D:\KLTN_Khang\DISFA_Data"', "setup_env.py", "from-folder --src", "check --data",
                  "smoke --data", "train --data", r'"%REPO%\..")'):
         assert step in t, step
+
+
+# ---------------------------------------------------------------- refit (dòng b) trên máy riêng → cell I
+def refit_setup(tmp_path):
+    """Máy riêng: list + splits nhỏ trong <data>, run (a) seed 2 đã xong, lock khớp splits nhỏ."""
+    root, splits = small_dataset(tmp_path / "pcdata")
+    data = tmp_path / "pcdata" / "local"
+    shutil.copytree(splits, data / "splits_v2")
+    lock = toy_lock(data / "splits_v2")
+    out = tmp_path / "out"
+    with redirect_stdout(io.StringIO()):
+        PC.train(data, [2], out=out, lock=lock, run=fake_train(lock, []))
+    return data, lock, out
+
+
+def fake_refit(lock, calls):
+    def run(cmd, log):
+        assert cmd[1:5] == ["-u", "-m", "refit.run", "one"]
+        got = {}
+        with patch("sys.argv", ["x", "train", *cmd[5:]]), patch.object(TC, "train", lambda a: got.update(vars(a))):
+            TC.main()
+        calls.append(got)
+        k = int(Path(got["manifest"]).stem[-1])
+        write_run(Path(got["output"]), got["variant"], k, got["seed"], lock, epochs=got["stop_after"], age_min=0,
+                  manifest_hash=sha(Path(got["manifest"]).read_bytes()))
+        return ""
+    return run
+
+
+def test_pc_refit_runs_after_train_and_packs(tmp_path):
+    data, lock, out = refit_setup(tmp_path)
+    calls = []
+    with redirect_stdout(io.StringIO()):
+        PC.refit(data, [2], out=out, lock=lock, run=fake_refit(lock, calls))
+    assert len(calls) == 6 and all(c["stop_after"] == 1 and c["epochs"] == 20 for c in calls)   # E = epoch (a) chọn
+    assert all(Path(c["manifest"]).parent.name == "manifests" for c in calls)
+    zips = sorted(p.name for p in (out / "upload").glob("refit1_*.zip"))
+    assert len(zips) == 6
+    assert "full/fold2/seed2/refit.json" in zipfile.ZipFile(out / "upload" / "refit1_full_fold2_seed2.zip").namelist()
+    with redirect_stdout(io.StringIO()):
+        PC.refit(data, [2], out=out, lock=lock, run=fake_refit(lock, calls))                   # chạy lại: không làm lại
+    assert len(calls) == 6
+
+
+def test_cell_i_imports_refit_only_with_its_run_a(tmp_path):
+    data, lock, out = refit_setup(tmp_path)
+    with redirect_stdout(io.StringIO()):
+        PC.refit(data, [2], out=out, lock=lock, run=fake_refit(lock, []))
+    up = tmp_path / "Sym" / "upload"
+    up.mkdir(parents=True)
+    for z in (out / "upload").glob("refit1_*_fold1_*.zip"):                 # chỉ refit fold 1, thiếu run (a) trên Drive
+        shutil.copy(z, up / z.name)
+    DS[tmp_path] = (data, data / "splits_v2")
+    sym, log = import_zips(tmp_path, lock)
+    assert len(list((up / "rejected").glob("refit1_*.zip"))) == 2 and "thiếu run (a)" in log
+    for z in (out / "upload").glob("*_fold2_*.zip"):                        # đủ (a) + refit của fold 2
+        shutil.copy(z, up / z.name)
+    sym, log = import_zips(tmp_path, lock)
+    done = sorted(p.name for p in (up / "done").glob("*.zip"))
+    assert done == ["aug1_baseline_fold2_seed2.zip", "aug1_full_fold2_seed2.zip",
+                    "refit1_baseline_fold2_seed2.zip", "refit1_full_fold2_seed2.zip"]
+    rec = json.loads((sym / "runs_refit1" / "full" / "fold2" / "seed2" / "refit.json").read_text())
+    assert rec["E"] == 1 and rec["model"] == "last.pt"
+    assert "runs_refit1: 2/18" in log and "runs_aug1: 2/18" in log

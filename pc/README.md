@@ -119,6 +119,7 @@ Lệnh chạy 1 epoch của `full/fold2/seed0`, tức đúng run pilot đã có 
 
 - **Bị ngắt (mất mạng, tắt máy, Ctrl+C):** chạy lại đúng lệnh trên. Run dở sẽ resume; run bị ngắt ngay trong epoch 1 được cất sang `pc_runs/failed_runs/` rồi train lại.
 - **Trên Windows remote:** tắt chế độ ngủ của máy, và chạy trong cửa sổ không bị đóng khi ngắt Remote Desktop. Trên Linux thì chạy trong `tmux`.
+- **Refit (dòng b):** `train_data_co_san.bat` và `2_train.bat` tự chạy `refit` ngay sau `train`. Lệnh này train lại mỗi run trên đủ 18 subject và dừng ở epoch E mà run đó chọn, cho ra zip `refit1_*.zip`. Chạy tay: `<py> pc/train_18_run.py refit --data <DATA> --seeds 2`.
 - **Đầu ra:** run nằm ở `pc_runs/runs_aug1/`, log ở `pc_runs/logs/`. Mỗi run xong được nén thành `pc_runs/upload/aug1_<variant>_fold<k>_seed<s>.zip` (khoảng 0,7 GB).
 
 ## 7. Đưa kết quả về Drive

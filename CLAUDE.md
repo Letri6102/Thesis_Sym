@@ -61,6 +61,7 @@ runs_retry1/                 9 run cũ, KHÔNG augmentation, ĐÓNG BĂNG — ch
 runs_aug1/                   run mới với strong_train_aug
 runs_aug2/                   B2: aug + EMA + val dày + LR backbone, chỉ fold 2 seed 0 — thử nghiệm, không thuộc 18 run
 stage2_aug2/                 cell D2: Tầng 2 chỉ val trên runs_aug2
+runs_refit1/                 dòng (b) refit: <variant>/fold{k}/seed{s}/ (last.pt = model, refit.json = E và nguồn) + manifests/
 runs_swin_probe/             dò Swin-B (đang rỗng)
 stage2_v2/                   Tầng 2 chuẩn (stage2_decoder): rules/fold{k}/, results/<variant>/fold{k}/seed{s}/, summary.json
 contrast_ci/summary.json     CI full − baseline trên test (stage2_decoder/contrast_ci.py) — chỉ tạo một lần, khi mở test
@@ -75,6 +76,7 @@ Contrastive_V1/checkpoints/resnet50-19c8e357.pth   trọng số ImageNet
 
 ```text
 Contrastive_V1/              Tầng 1 (train_contrastive.py là entry point) + stage2_decoder/ (Tầng 2 chuẩn, test: tests/test_stage2.py)
+Contrastive_V1/refit/        dòng (b) refit: gọi train_contrastive đã khoá với manifest gộp fit + val (test: tests/test_refit.py)
 Contrastive_V1/remote_stage2/ script cho máy remote (runs_retry1, splits cũ) — LỖI THỜI, trái quy tắc chỉ chạy Colab
 MultiviewSymAU-master/       bản cài đặt lại SymGraphAU (Stage 2/3 cũ) để đối chiếu
 Tang2_Decoder.ipynb          Tầng 2 bản notebook 13/11 — LỖI THỜI, lệch đề cương; dùng stage2_decoder
@@ -113,6 +115,7 @@ Quy tắc cho mọi cell:
   - **Không sửa hay push file bị hash, không tune, không thêm variant cho tới khi đủ 18 run.**
   - Phân công 23/11: máy RTX 5090 train **seed 2**, Colab train seed 0 và 1 (cell G với `SEEDS = [0, 1]`). Hai variant của cùng một seed phải train trên cùng một máy.
   - Phải công bố trong luận văn: seed 2 train trên RTX 5090, seed 0/1 trên L4; pilot trượt tiêu chí "đỉnh sau epoch 2"; việc khoá diễn ra sau khi đã nhìn val fold 2 (chứa subject test của fold 1/3); aug được chọn 13/11, sau lần mở test thăm dò 29/10.
+- **Dòng (b) refit (chủ dự án chốt 23/11):** train lại mỗi run (a) đã xong trên **đủ 18 subject** outer-train (fit + inner val), cùng code và cấu hình đã khoá; lịch cosine 20 epoch giữ nguyên và dừng sau epoch E mà run (a) chọn trên inner val; model là `last.pt`; trọng số lớp của L_wa tính lại trên 18 subject. Code: `Contrastive_V1/refit/` (ngoài file bị hash), chạy bằng cell K (Colab) hoặc `pc/train_18_run.py refit`; kết quả ở `runs_refit1/`. Chỉ dòng (b) đặt cạnh 63.0; dòng (a) vẫn là kết quả chính.
 - Khi theo dõi loss, đọc các cột thô `global_con`/`node_con`/`cross_con` trong `history.json`. Không đọc `total`, vì cột này có nhân hệ số ramp.
 
 ## 7. Việc đang mở (cập nhật 22/11/2026)
@@ -145,5 +148,5 @@ Quy tắc cho mọi cell:
 8. **CHẶN mở test** cho tới khi xong các mục sau:
    - đủ 18 run;
    - ~~code CI cho `full − baseline`~~ **XONG 22/11**: `stage2_decoder/contrast_ci.py` (test: `tests/test_contrast_ci.py`). Không đọc file test nào nếu chưa đủ 18 run đúng khoá; `--check-only` (cell H) không bao giờ đọc test. Test `test_lock_matches_code_and_cell_g` đỏ nghĩa là file bị hash đã đổi: không push.
-   - chốt và cài dòng (b) refit (chưa có code), hoặc chính thức bỏ. Chỉ dòng (b) được đặt cạnh 63.0, nên phải xong trước lần mở test duy nhất.
+   - ~~chốt dòng (b) refit~~ **ĐÃ CHỐT + CODE 23/11** (cell K, `pc/train_18_run.py refit`). Còn thiếu trước khi mở test: (1) evaluate test cho `last.pt` của refit, viết cùng cell mở test; (2) Tầng 2 trên refit dùng λ và ngưỡng C1 lấy từ run (a) tương ứng (`stage2_decoder` chưa hỗ trợ λ cố định).
    - ~~quy tắc 3 seed~~ **ĐÃ CHỐT 22/11 (chủ dự án), trước khi mở test:** `full − baseline` chỉ ĐẠT khi thêm "Δ > 0 ở cả 3 seed" (`contrast_ci.contrast_verdict`; lý do: `stage2_decoder/sim_contrast_rule.py`, đề cương §6). `R0 − C0` giữ quy tắc cũ.

@@ -275,6 +275,7 @@ Cộng các mức thấp được 62.78 và các mức cao được 66.5, nhưng
 - Báo cáo hai dòng:
   - **(a) giao thức chặt** — kết quả chính;
   - **(b) giao thức khớp paper** — refit trên `fit + inner val` với số epoch cố định lấy từ (a). Dòng này chỉ dùng để so với 62.94.
+    > **Đã chốt 23/11:** train lại mỗi run (a) đã xong trên **đủ 18 subject** outer-train (fit + inner val), cùng code và cấu hình đã khoá; lịch cosine 20 epoch giữ nguyên và dừng sau epoch E mà run (a) chọn trên inner val; model là `last.pt`; trọng số lớp của L_wa tính lại trên 18 subject. Lý do giữ lịch 20 epoch và dừng ở E (thay vì nén lịch còn E epoch): để model refit đi đúng quỹ đạo của checkpoint đã chọn ở (a), chỉ khác là có thêm dữ liệu. 3 fold ngoài là fold gốc của ME-GraphAU, trùng paper; inner val là phần duy nhất ta tự chia.
 
 **Xung đột giữa refit và Tầng 2.** Sau khi refit trên `fit + inner val` thì không còn val để chọn λ (và tune ngưỡng C1 ở nhánh phụ). Cách xử lý: lấy λ và `t_i` từ mô hình (a), áp nguyên cho mô hình (b), và ghi rõ đây là chuyển giao tham số. Không tune lại trên test.
 

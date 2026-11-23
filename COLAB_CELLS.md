@@ -782,59 +782,71 @@ run_logged([sys.executable, '-u', '-m', 'stage2_decoder.contrast_ci', '--runs', 
 
 ## I. Nhập run train trên máy GPU riêng — CPU, chạy sau Setup (`IMAGES = False`)
 
-Có sẵn dạng notebook kèm Setup: [notebooks/Nhap_run_PC.ipynb](notebooks/Nhap_run_PC.ipynb). Máy riêng chạy `pc/train_18_run.py` và tạo `aug1_<variant>_fold<k>_seed<s>.zip`; tải các zip này lên `MyDrive/Sym/upload/`.
+Có sẵn dạng notebook kèm Setup: [notebooks/Nhap_run_PC.ipynb](notebooks/Nhap_run_PC.ipynb). Máy riêng chạy `pc/train_18_run.py` và tạo `aug1_<variant>_fold<k>_seed<s>.zip` (run (a)) và `refit1_…zip` (dòng (b)); tải các zip này lên `MyDrive/Sym/upload/`. Zip refit chỉ được nhập khi run (a) tương ứng đã có trên Drive và E trùng epoch nó chọn.
 - Kiểm khoá từng run (config, hash code, thư viện, manifest, đủ 20 epoch, có `best.pt` và `last.pt`), rồi chép vào `runs_aug1/`.
 - **Không ghi đè** run đã đủ 20 epoch trên Drive. Không đụng run vừa được ghi dưới 15 phút (Colab có thể đang train).
 - Zip đã xử lý được chuyển sang `upload/done/`, `upload/duplicate/` hoặc `upload/rejected/`. Chạy lại cell là xử lý tiếp phần còn lại.
 
 ```python
-# ==== Cell I: nhập run train trên máy GPU riêng (MyDrive/Sym/upload/aug1_*.zip) vào runs_aug1 — kiểm khoá, không ghi đè ====
+# ==== Cell I: nhập run train trên máy GPU riêng (MyDrive/Sym/upload/*.zip) — kiểm khoá, không ghi đè ====
 import re, zipfile
 sys.path.insert(0, str(CODE))
-from stage2_decoder.contrast_ci import LOCK, run_problems
+from stage2_decoder.contrast_ci import LOCK, config_problems, run_problems
+from refit import run as R
 
-UP, BUSY_MIN, EPOCHS = SYM / 'upload', 15, 20
+UP, BUSY_MIN = SYM / 'upload', 15
+REFIT = SYM / 'runs_refit1'
 assert RUNS.name == 'runs_aug1', f'RUNS phải là runs_aug1, đang là {RUNS}'
+REFIT_HASH = R.write_manifests(SPLITS, DATA, REFIT)      # manifest refit chuẩn, tính lại từ splits_v2 đã khoá
 
-def ok(run, v, k, s):
+def ok_aug1(run, v, k, s):
     return not run_problems(run, v, k, s, LOCK) and (run / 'last.pt').exists()
+
+def ok_refit1(run, v, k, s):
+    try:
+        rec, cfg = (json.loads((run / n).read_text()) for n in ('refit.json', 'config.json'))
+    except (OSError, ValueError):
+        return False
+    a = RUNS / v / f'fold{k}' / f'seed{s}'
+    lock = dict(LOCK, manifests={**LOCK['manifests'], k: REFIT_HASH[k]})
+    return (rec['manifest_hash'] == REFIT_HASH[k] and R.n_epochs(run) == rec['E'] and (run / 'last.pt').exists()
+            and not config_problems(cfg, v, k, s, lock) and ok_aug1(a, v, k, s) and R.selected_epoch(a) == rec['E'])
+
+KINDS = {'aug1': (RUNS, ok_aug1), 'refit1': (REFIT, ok_refit1)}
 
 def park(z, sub):
     (UP / sub).mkdir(parents=True, exist_ok=True)
     shutil.move(str(z), str(UP / sub / z.name))
 
-zips = sorted(UP.glob('aug1_*.zip'))
+zips = sorted(UP.glob('*.zip'))                           # aug1_* đứng trước refit1_*: refit cần run (a) đã có
 print(f'{len(zips)} zip chờ nhập trong {UP}', flush=True)
 for z in zips:
-    m = re.fullmatch(r'aug1_(baseline|full)_fold([123])_seed([012])', z.stem)
+    m = re.fullmatch(r'(aug1|refit1)_(baseline|full)_fold([123])_seed([012])', z.stem)
     if not m:
         print(f'  {z.name}: tên lạ, bỏ qua'); continue
-    v, k, s = m[1], int(m[2]), int(m[3])
-    target, prefix = RUNS / v / f'fold{k}' / f'seed{s}', f'{v}/fold{k}/seed{s}/'
+    kind, v, k, s = m[1], m[2], int(m[3]), int(m[4])
+    base, ok = KINDS[kind]
+    target, prefix = base / v / f'fold{k}' / f'seed{s}', f'{v}/fold{k}/seed{s}/'
     work = Path('/content/pc_import') / z.stem
     shutil.rmtree(work, ignore_errors=True)
     work.mkdir(parents=True)
     subprocess.run(['cp', str(z), str(work / 'run.zip')], check=True, timeout=1800)     # đọc Drive có timeout
     with zipfile.ZipFile(work / 'run.zip') as f:
-        names = f.namelist()
-        if any(not n.startswith(prefix) or '..' in n.split('/') for n in names):
+        if any(not n.startswith(prefix) or '..' in n.split('/') for n in f.namelist()):
             print(f'  {z.name}: zip chứa đường dẫn lạ → KHÔNG nhập'); park(z, 'rejected'); continue
         f.extractall(work / 'x')
     run = work / 'x' / v / f'fold{k}' / f'seed{s}'
     if not ok(run, v, k, s):
-        print(f'  {z.name}: lệch khoá hoặc chưa xong {run_problems(run, v, k, s, LOCK)} → KHÔNG nhập')
-        park(z, 'rejected'); continue
+        print(f'  {z.name}: lệch khoá, chưa xong, hoặc thiếu run (a) tương ứng → KHÔNG nhập'); park(z, 'rejected'); continue
     gpu = json.loads((run / 'environment.json').read_text()).get('gpu')
     if (target / 'config.json').exists():
         if ok(target, v, k, s):
-            print(f'  {z.name}: Drive đã có run này đủ {EPOCHS} epoch → giữ bản Drive, không ghi đè')
-            park(z, 'duplicate'); continue
+            print(f'  {z.name}: Drive đã có run này hoàn chỉnh → giữ bản Drive, không ghi đè'); park(z, 'duplicate'); continue
         files = [p for p in target.rglob('*') if p.is_file()]
         age = (time.time() - max(p.stat().st_mtime for p in files)) / 60 if files else 1e9
         if age < BUSY_MIN:
-            print(f'  {z.name}: run này vừa được ghi {age:.0f} phút trước (Colab có thể đang train) → để lại, chạy lại cell sau')
-            continue
-        dest = SYM / 'failed_runs' / f'aug1_{v}_fold{k}_seed{s}_{time.strftime("%Y%m%d_%H%M%S")}_truoc_nhap'
+            print(f'  {z.name}: run này vừa được ghi {age:.0f} phút trước (Colab có thể đang train) → để lại, chạy lại cell sau'); continue
+        dest = SYM / 'failed_runs' / f'{kind}_{v}_fold{k}_seed{s}_{time.strftime("%Y%m%d_%H%M%S")}_truoc_nhap'
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(target), str(dest))
         print(f'  bản dở trên Drive → failed_runs/{dest.name}')
@@ -848,8 +860,10 @@ for z in zips:
     shutil.rmtree(work)
     print(f'  {z.name}: ĐÃ NHẬP (GPU {gpu})', flush=True)
 
-done = sum(ok(RUNS / v / f'fold{k}' / f'seed{s}', v, k, s) for v in ('baseline', 'full') for k in (1, 2, 3) for s in (0, 1, 2))
-print(f'\nruns_aug1 hiện có {done}/18 run đủ {EPOCHS} epoch đúng khoá. Đang chờ Drive đồng bộ...', flush=True)
+for kind, (base, ok) in KINDS.items():
+    n = sum(ok(base / v / f'fold{k}' / f'seed{s}', v, k, s) for v in ('baseline', 'full') for k in (1, 2, 3) for s in (0, 1, 2))
+    print(f'{base.name}: {n}/18 run hoàn chỉnh đúng khoá')
+print('Đang chờ Drive đồng bộ...', flush=True)
 drive.flush_and_unmount()
 ```
 
@@ -921,6 +935,43 @@ for i, (s, (size, want)) in enumerate(sorted(EXPECT.items()), 1):
         bad.append(s)
 print('\nKẾT QUẢ: ' + ('KHỚP 27/27: ảnh trong gói đúng bản trên Drive, máy GPU được train.' if not bad
                        else f'KHÁC ở {bad}: KHÔNG train bằng gói này, báo Claude.'))
+```
+
+---
+
+## K. Dòng (b) refit — GPU, chạy sau Setup (`IMAGES = True`)
+
+Chủ dự án chốt ngày 23/11. Mỗi run (a) đã xong được train lại trên **đủ 18 subject** outer-train (fit + inner val), với đúng công thức đã khoá, và dừng sau epoch E mà run (a) chọn trên inner val. Model refit là `last.pt`. Kết quả ghi vào `MyDrive/Sym/runs_refit1/`. Code ở `Contrastive_V1/refit/`, không đụng file bị hash.
+- Run (a) chưa xong thì bỏ qua, nên chạy lúc nào cũng được. Chạy lại cell là làm tiếp.
+- Mỗi run mất khoảng E × 10 phút trên L4. Máy GPU riêng tự refit seed của nó (`train_data_co_san.bat` chạy refit ngay sau train).
+- Không evaluate test. Test của dòng (b) mở cùng lần với dòng (a).
+
+```python
+# ==== Cell K: dòng (b) refit — train lại trên đủ 18 subject, dừng ở epoch E của run (a). Model refit = last.pt ====
+SEEDS = [0, 1]                 # cùng phân công với cell G; máy GPU riêng tự refit seed của nó
+OLD_SESSION_DEAD = False       # chỉ đặt True khi đã tự kiểm phiên cũ tắt hẳn
+
+assert torch.cuda.is_available(), 'Cần runtime GPU'
+assert str(DATA).startswith('/content/'), 'Ảnh chưa nằm trong /content: chạy Setup với IMAGES = True'
+assert RUNS.name == 'runs_aug1', f'RUNS phải là runs_aug1, đang là {RUNS}'
+sys.path.insert(0, str(CODE))
+from refit import run as R
+
+REFIT = SYM / 'runs_refit1'
+todo, skipped = R.jobs(RUNS, REFIT, SPLITS, DATA, seeds=SEEDS)
+print(f'Refit: {len(todo)} run cần làm, khoảng {sum(j["E"] for j in todo) * 10 / 60:.1f} giờ L4', flush=True)
+for x in skipped:
+    print('  bỏ qua', x)
+for i, j in enumerate(todo, 1):
+    name = f"refit1_{j['variant']}_fold{j['fold']}_seed{j['seed']}"
+    print(f'\n[{i}/{len(todo)}] {name} | dừng sau epoch {j["E"]}', flush=True)
+    moved = R.clear_stale(j, SYM / 'failed_runs', 15, OLD_SESSION_DEAD)
+    if moved:
+        print(f'  lần trước bị ngắt trong epoch 1 → cất sang failed_runs/{moved.name}')
+    run_logged(R.one_cmd(j, DATA), name)
+    R.finish(j)
+print('\nXONG refit của phiên này. Đang chờ Drive đồng bộ...', flush=True)
+drive.flush_and_unmount()
 ```
 
 ---

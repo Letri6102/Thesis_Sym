@@ -23,6 +23,8 @@ if not exist "%VPY%" (echo [LOI] Chua cai dat: chay 1_cai_dat.bat truoc & goto :
 echo Train seed %SEEDS%. Bi ngat thi chay lai file nay: run do se resume.
 echo Ngat UltraViewer khong sao, nhung KHONG dong cua so nay va KHONG sign out may.
 "%VPY%" pc\train_18_run.py train --data "%DATA%" --seeds %SEEDS% || goto :fail
+echo === Refit (dong b): train lai tren du 18 subject, dung o epoch E cua run (a)
+"%VPY%" pc\train_18_run.py refit --data "%DATA%" --seeds %SEEDS% || goto :fail
 "%VPY%" pc\train_18_run.py status
 echo.
 echo XONG. Zip ket qua: %ROOT%\Thesis_Sym\pc_runs\upload

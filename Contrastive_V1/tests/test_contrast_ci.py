@@ -218,7 +218,7 @@ def test_lock_matches_code_and_cell_g():
     assert CI.source_digest(TC.source_files()) == CI.LOCK["source"]
     assert CI.LOCK["variant_settings"] == {v: TC.VARIANTS[v] for v in (CI.BASELINE, CI.CANDIDATE)}
     nb = json.loads((REPO / "notebooks" / "Train_18_run.ipynb").read_text(encoding="utf-8"))
-    cell = "".join(nb["cells"][-1]["source"])
+    cell = next("".join(c["source"]) for c in nb["cells"] if "".join(c["source"]).startswith("# ==== Cell G"))
     assert cell in (REPO / "COLAB_CELLS.md").read_text(encoding="utf-8")
     ns = {}
     head = cell.split("LOCKED = ", 1)[1].split("MIN_FREE_GB", 1)[0]

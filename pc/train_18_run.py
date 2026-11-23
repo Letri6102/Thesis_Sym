@@ -80,7 +80,10 @@ def prepare(downloads, data, lock=LOCK, weight=WEIGHT, weight_prefix=WEIGHT_PREF
     if not marker.exists():
         for i, tar in enumerate(tars, 1):
             with tarfile.open(tar) as t:
-                t.extractall(data, filter="data")
+                try:
+                    t.extractall(data, filter="data")
+                except TypeError:                       # Python cũ chưa có filter; tar do chính ta dựng
+                    t.extractall(data)
             say(f"  giải nén {i:>2}/{len(tars)} {tar.name}")
         n = sum(len(f) for _, _, f in os.walk(data / "img"))
         if n != meta["n_images"] or n != n_images:
@@ -332,11 +335,11 @@ def is_done(run, epochs):
     return n_epochs(run) >= epochs and all((run / n).exists() for n in ("config.json", "best.pt", "last.pt"))
 
 
-def pack(run, v, k, s, out):
+def pack(run, v, k, s, out, prefix="aug1"):
     """Nén một run xong thành zip để tải lên MyDrive/Sym/upload/ (cell I trên Colab giải nén và kiểm)."""
     up = Path(out) / "upload"
     up.mkdir(parents=True, exist_ok=True)
-    target = up / f"aug1_{v}_fold{k}_seed{s}.zip"
+    target = up / f"{prefix}_{v}_fold{k}_seed{s}.zip"
     tmp = target.with_suffix(".zip.partial")
     with zipfile.ZipFile(tmp, "w", zipfile.ZIP_STORED) as z:
         for p in sorted(run.rglob("*")):
@@ -348,6 +351,7 @@ def pack(run, v, k, s, out):
 
 def train(data, seeds, folds=(1, 2, 3), out=OUT, lock=LOCK, old_session_dead=False, run=launch):
     out = Path(out)
+    out.mkdir(parents=True, exist_ok=True)
     runs = out / "runs_aug1"
     epochs = lock["common"]["epochs"]
     for v, k, s in jobs():
@@ -391,6 +395,28 @@ def train(data, seeds, folds=(1, 2, 3), out=OUT, lock=LOCK, old_session_dead=Fal
             raise SystemExit(f"{name} chưa xong hoặc lệch khoá: {bad}")
         say(f"  xong → {pack(rd, v, k, s, out)}  (tải lên MyDrive/Sym/upload/)")
     say(f"\nXONG phần của máy này. Zip chờ tải lên: {sorted(p.name for p in (out / 'upload').glob('*.zip'))}")
+
+
+# ---------------------------------------------------------------- refit (dòng b)
+def refit(data, seeds, folds=(1, 2, 3), out=OUT, lock=LOCK, old_session_dead=False, run=launch):
+    """Refit các run (a) đã xong trên máy này: train lại trên đủ 18 subject, dừng ở epoch E (Contrastive_V1/refit)."""
+    from refit import run as R
+    out = Path(out)
+    todo, skipped = R.jobs(out / "runs_aug1", out / "runs_refit1", Path(data) / "splits_v2", data, seeds, folds, lock)
+    for x in skipped:
+        say(f"  bỏ qua {x}")
+    names = [f"{j['variant']}/f{j['fold']}/s{j['seed']} E={j['E']}" for j in todo]
+    say(f"Refit: {len(todo)} run ({', '.join(names) or 'không có'})")
+    for i, j in enumerate(todo, 1):
+        name = f"refit1_{j['variant']}_fold{j['fold']}_seed{j['seed']}"
+        say(f"\n[{i}/{len(todo)}] {name} | dừng sau epoch {j['E']}")
+        moved = R.clear_stale(j, out / "failed_runs", BUSY_MIN, old_session_dead)
+        if moved:
+            say(f"  lần trước bị ngắt trong epoch 1 → cất sang {moved}")
+        run(R.one_cmd(j, data, lock=lock), out / "logs" / f"{time.strftime('%Y%m%d_%H%M%S')}_{name}.log")
+        R.finish(j, lock)
+        say(f"  xong → {pack(Path(j['out']), j['variant'], j['fold'], j['seed'], out, prefix='refit1')}")
+    say(f"\nXONG refit. Zip chờ tải lên: {sorted(p.name for p in (out / 'upload').glob('refit1_*.zip'))}")
 
 
 # ---------------------------------------------------------------- smoke
@@ -442,14 +468,15 @@ def main(argv=None):
     f.add_argument("--src", required=True)
     f.add_argument("--data", required=True)
     f.add_argument("--lists", help="thư mục chứa 12 file list chuẩn, nếu list trong --src khác bản chuẩn")
-    for name in ("check", "smoke", "train"):
+    for name in ("check", "smoke", "train", "refit"):
         q = sub.add_parser(name)
         q.add_argument("--data", required=True)
     sub.choices["smoke"].add_argument("--keep", action="store_true")
-    sub.choices["train"].add_argument("--seeds", type=int, nargs="+", required=True, choices=(0, 1, 2),
-                                      help="chỉ các seed giao cho máy này; Colab không được chạy trùng")
-    sub.choices["train"].add_argument("--folds", type=int, nargs="+", default=[1, 2, 3], choices=(1, 2, 3))
-    sub.choices["train"].add_argument("--old-session-dead", action="store_true")
+    for name in ("train", "refit"):
+        sub.choices[name].add_argument("--seeds", type=int, nargs="+", required=True, choices=(0, 1, 2),
+                                       help="chỉ các seed giao cho máy này; Colab không được chạy trùng")
+        sub.choices[name].add_argument("--folds", type=int, nargs="+", default=[1, 2, 3], choices=(1, 2, 3))
+        sub.choices[name].add_argument("--old-session-dead", action="store_true")
     sub.add_parser("status")
     a = ap.parse_args(argv)
     if a.cmd == "prepare":
@@ -464,6 +491,9 @@ def main(argv=None):
     elif a.cmd == "train":
         check(a.data)
         train(a.data, a.seeds, a.folds, old_session_dead=a.old_session_dead)
+    elif a.cmd == "refit":
+        check(a.data)
+        refit(a.data, a.seeds, a.folds, old_session_dead=a.old_session_dead)
     else:
         status()
 
