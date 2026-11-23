@@ -307,11 +307,11 @@ Cộng các mức thấp được 62.78 và các mức cao được 66.5, nhưng
 **Contrastive được coi là có đóng góp** khi thoả cả hai bước:
 1. Chọn **một** cấu hình contrastive trên inner val **trước khi mở test**: `full` hoặc cấu hình sweep tốt nhất trên val.
    > **Đã chốt 22/11: `full`, không sweep**, trên cấu hình pilot đã khoá (CLAUDE.md §6). Lý do: val gộp, hoặc val fold 2 dùng cho mọi fold, đều chứa subject test của fold khác.
-2. Cấu hình đó so với `baseline` có mean Δ > 0 qua 3 seed, và CI không chứa 0 ở ít nhất 2/3 seed.
+2. Cấu hình đó so với `baseline` có mean Δ > 0 qua 3 seed, CI không chứa 0 ở ít nhất 2/3 seed, **và Δ > 0 ở cả 3 seed** (điều kiện cuối chốt 22/11, trước khi mở test).
 
 > **Cài 22/11:** `stage2_decoder/contrast_ci.py`, cùng hàm bootstrap với `R0 − C0`.
 >
-> **[mô phỏng 22/11, số tổng hợp, chờ quyết]** CI theo từng seed chỉ gồm dao động giữa subject, không gồm dao động giữa các lần train. 2000 lần lặp mỗi dòng, 27 subject, mức F1 theo bảng của paper; độ lớn nhiễu là giả định:
+> **[mô phỏng 22/11, số tổng hợp; đã chốt thêm điều kiện 3 seed — tái tạo: `python -m stage2_decoder.sim_contrast_rule`, 1000 bootstrap mỗi lần lặp]** CI theo từng seed chỉ gồm dao động giữa subject, không gồm dao động giữa các lần train. 2000 lần lặp mỗi dòng, 27 subject, mức F1 theo bảng của paper; độ lớn nhiễu là giả định:
 >
 > | SD của Δ giữa các seed (điểm) | ĐẠT nhầm khi Δ thật = 0 | như trên, thêm "Δ > 0 ở cả 3 seed" | phát hiện Δ thật ≈ +1 | như trên, thêm điều kiện | phát hiện Δ thật ≈ +2 | như trên, thêm điều kiện |
 > |---|---|---|---|---|---|---|
@@ -380,4 +380,4 @@ Chỉ một so sánh chính này được mở test. Các variant còn lại đ�
     - lấy R0 làm nhánh chính và bỏ R\*; tiêu chí ở §6 đổi thành `R0 − C0`;
     - đầu ra mới ở `MyDrive/Sym/stage2_v2/`.
 13. **Cập nhật 22/11 — pilot và D2:** pilot vẫn đạt đỉnh ở epoch 1; gói EMA + LR không có bằng chứng có lợi; phát hiện rò rỉ khi chọn cấu hình chung trên inner val (§6, §7).
-14. **Khoá cấu hình 22/11:** cấu hình pilot, chỉ `baseline` và `full`, 18 run. Khoá sau khi đã nhìn val fold 2, và pilot trượt 1/3 tiêu chí: cả hai điều này phải công bố. Trước khi mở test còn phải quyết dòng (b) refit và điều kiện 3 seed (§6); CI cho `full − baseline` đã code xong.
+14. **Khoá cấu hình 22/11:** cấu hình pilot, chỉ `baseline` và `full`, 18 run. Khoá sau khi đã nhìn val fold 2, và pilot trượt 1/3 tiêu chí: cả hai điều này phải công bố. Trước khi mở test còn phải quyết dòng (b) refit; điều kiện 3 seed đã chốt (§6); CI cho `full − baseline` đã code xong.

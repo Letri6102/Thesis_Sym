@@ -7,7 +7,9 @@ Phép đo cố định trước khi mở test, không có tuỳ chọn để đ�
   Δ_seed = mean 3 fold của [macro-F1(full) − macro-F1(baseline)], ngưỡng 0.5 như train_contrastive.metrics;
   CI95   = percentile của 2000 lần resample subject trong từng fold, hai variant dùng chung trọng số
            (dùng lại summarize.fold_mean_boot, cùng phép tính với R0 − C0);
-  ĐẠT    = mean Δ qua 3 seed > 0 và CI95 nằm trên 0 ở ≥ 2/3 seed.
+  ĐẠT    = mean Δ qua 3 seed > 0, CI95 nằm trên 0 ở ≥ 2/3 seed, VÀ Δ > 0 ở cả 3 seed.
+           Điều kiện cuối do chủ dự án thêm ngày 22/11, trước khi mở test (sim_contrast_rule.py cho lý do);
+           chỉ áp cho so sánh này, R0 − C0 vẫn theo summarize.verdict.
 
 Không evaluate và không train. Chỉ đọc file test khi đủ 18 run đúng cấu hình khoá VÀ đủ 18 bộ dự đoán test.
 File nằm trong stage2_decoder/ nên không thuộc danh sách file bị hash của train_contrastive.py.
@@ -62,13 +64,8 @@ def expected_config(v, k, s, lock):
 
 
 # ---------------------------------------------------------------- bước 1: không đọc test
-def run_problems(run, v, k, s, lock):
-    """Chỉ đọc config.json và history.json, và kiểm best.pt có tồn tại."""
-    try:
-        cfg = json.loads((run / "config.json").read_text(encoding="utf-8"))
-        hist = json.loads((run / "history.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return ["thiếu hoặc hỏng config.json / history.json"]
+def config_problems(cfg, v, k, s, lock):
+    """So một config.json (đã đọc) với cấu hình khoá."""
     out = []
     want = expected_config(v, k, s, lock)
     got = {key: val for key, val in cfg.items() if key != "source_hashes"}
@@ -77,6 +74,17 @@ def run_problems(run, v, k, s, lock):
         out.append(f"config lệch khoá ở {bad}")
     if source_digest(cfg.get("source_hashes", {})) != lock["source"]:
         out.append("hash code lệch khoá")
+    return out
+
+
+def run_problems(run, v, k, s, lock):
+    """Chỉ đọc config.json và history.json, và kiểm best.pt có tồn tại."""
+    try:
+        cfg = json.loads((run / "config.json").read_text(encoding="utf-8"))
+        hist = json.loads((run / "history.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ["thiếu hoặc hỏng config.json / history.json"]
+    out = config_problems(cfg, v, k, s, lock)
     n = lock["common"]["epochs"]
     if [r.get("epoch") for r in hist] != list(range(1, n + 1)):
         out.append(f"history chưa đủ {n} epoch")
@@ -139,6 +147,14 @@ def check_pairing(data, n_subjects):
         raise ValueError("Một subject nằm trong test của hơn một fold")
 
 
+def contrast_verdict(per_seed):
+    """Quy tắc §6 cộng điều kiện 22/11: một seed có Δ <= 0 thì cao nhất là CHƯA CHẮC."""
+    base = verdict(per_seed)
+    if base == "ĐẠT" and not all(r["delta_pp"] > 0 for r in per_seed):
+        return "CHƯA CHẮC"
+    return base
+
+
 def compare(data, n_boot=N_BOOT):
     per_seed = []
     for s in SEEDS:
@@ -159,10 +175,12 @@ def compare(data, n_boot=N_BOOT):
 
     return dict(comparison=f"{CANDIDATE}-{BASELINE}", split="test", folds=list(FOLDS), seeds=list(SEEDS),
                 n_boot=n_boot, boot_seed=BOOT_SEED, au_names=AU_NAMES,
-                rule="mean Δ > 0 và CI95 nằm trên 0 ở >= 2/3 seed",
+                rule="mean Δ > 0, CI95 nằm trên 0 ở >= 2/3 seed, và Δ > 0 ở cả 3 seed",
+                rule_amended="2026-11-22: thêm 'Δ > 0 ở cả 3 seed', trước khi mở test",
                 note="CI chỉ gồm dao động giữa subject test, không gồm dao động giữa các lần train",
                 per_seed=per_seed, baseline=mean_sd("baseline"), full=mean_sd("full"), delta=mean_sd("delta_pp"),
-                seeds_ci_above_0=sum(r["ci_lo"] > 0 for r in per_seed), verdict=verdict(per_seed),
+                seeds_ci_above_0=sum(r["ci_lo"] > 0 for r in per_seed),
+                seeds_delta_above_0=sum(r["delta_pp"] > 0 for r in per_seed), verdict=contrast_verdict(per_seed),
                 checkpoints={f"{v}/fold{k}/seed{s}": dict(sha256=d["checkpoint"], selected=d["selected"])
                              for (v, k, s), d in data.items()},
                 code_sha256={name: digest(Path(__file__).with_name(name))
@@ -179,7 +197,8 @@ def show(rep):
     b, c, d = rep["baseline"], rep["full"], rep["delta"]
     print(f"mean ± SD qua seed: baseline {b['mean']:.2f} ± {b['sd']:.2f} | full {c['mean']:.2f} ± {c['sd']:.2f}"
           f" | Δ {d['mean']:+.2f} ± {d['sd']:.2f}")
-    print(f"CI trên 0 ở {rep['seeds_ci_above_0']}/{len(SEEDS)} seed → {rep['verdict']}")
+    print(f"CI trên 0 ở {rep['seeds_ci_above_0']}/{len(SEEDS)} seed (cần ≥ 2) | "
+          f"Δ > 0 ở {rep['seeds_delta_above_0']}/{len(SEEDS)} seed (cần đủ {len(SEEDS)}) → {rep['verdict']}")
 
 
 def main(argv=None, lock=LOCK):

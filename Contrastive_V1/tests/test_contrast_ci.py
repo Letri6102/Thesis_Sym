@@ -235,3 +235,29 @@ def test_report_notebook_hides_this_log(tmp_path, capsys):
     cell = "".join(next(c for c in nb["cells"] if c["cell_type"] == "code")["source"])
     pattern = re.search(r"TEST_LOG = re\.compile\(r'(.*)'\)", cell).group(1)
     assert re.search(pattern, capsys.readouterr().out)
+
+
+@pytest.mark.parametrize("deltas,lows,old,new", [
+    ((1., 1., 1.), (.1, .1, -.1), "ĐẠT", "ĐẠT"),
+    ((2., 2., -.5), (.1, .1, -2.), "ĐẠT", "CHƯA CHẮC"),        # đúng ca mà điều kiện 22/11 chặn
+    ((2., 2., 0.), (.1, .1, -1.), "ĐẠT", "CHƯA CHẮC"),         # Δ = 0 không tính là dương
+    ((1., 1., 1.), (.1, -.1, -.1), "CHƯA CHẮC", "CHƯA CHẮC"),  # cả 3 dương không cứu được khi thiếu CI
+    ((-1., -1., .5), (-2., -2., -1.), "KHÔNG ĐẠT", "KHÔNG ĐẠT"),
+])
+def test_rule_requires_every_seed_positive(deltas, lows, old, new):
+    from stage2_decoder.summarize import verdict
+    per_seed = [dict(delta_pp=d, ci_lo=lo) for d, lo in zip(deltas, lows)]
+    assert verdict(per_seed) == old                            # R0 − C0 vẫn theo quy tắc cũ
+    assert CI.contrast_verdict(per_seed) == new
+
+
+def test_one_negative_seed_blocks_pass_end_to_end(tmp_path, capsys):
+    runs, _ = make_runs(tmp_path, toy_lock(), signal=(0., .4))
+    data = {j: CI.load_run(CI.run_dir(runs, *j), *j) for j in CI.jobs()}
+    for k in CI.FOLDS:
+        data["baseline", k, 2], data["full", k, 2] = data["full", k, 2], data["baseline", k, 2]
+    rep = CI.compare(data, n_boot=200)
+    assert rep["delta"]["mean"] > 0 and rep["seeds_ci_above_0"] == 2 and rep["seeds_delta_above_0"] == 2
+    assert rep["verdict"] == "CHƯA CHẮC"
+    CI.show(rep)
+    assert "Δ > 0 ở 2/3 seed (cần đủ 3)" in capsys.readouterr().out

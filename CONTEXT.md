@@ -109,7 +109,7 @@ Trên BP4D (ngoài phạm vi luận văn): 65.3 với ResNet-50, 64.8 với Swin
    - `full − baseline > 0`. Mức tương ứng trong paper là EKR: +0.9 với ResNet-50, +0.3 với Swin-B.
    - `R0 − C0 > 0`, mục tiêu +0.25 đến +0.5.
    
-   Tiêu chí: CI không chứa 0 ở ít nhất 2/3 số seed (đề cương §6).
+   Tiêu chí: CI không chứa 0 ở ít nhất 2/3 số seed (đề cương §6). Riêng `full − baseline` còn cần Δ > 0 ở cả 3 seed (chốt 22/11).
 
 **Hiện trạng (22/11):**
 - Detector cũ, không augmentation, test thăm dò ngày 29/10: `baseline` seed 0 = **60.53**, kém 62.94 là 2.41 điểm. Thấp hơn cả JFL của paper (62.1). Số này chỉ là thăm dò.
