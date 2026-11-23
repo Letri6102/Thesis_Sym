@@ -317,3 +317,96 @@ def test_cell_i_rejects_drifted_or_unsafe_zips(tmp_path):
         shutil.copy(z, tmp_path / "Sym" / "upload" / z.name)
     sym, log = import_zips(tmp_path, lock)
     assert len(list((sym / "upload" / "rejected").glob("*.zip"))) == 6 and "lệch khoá" in log
+
+
+# ---------------------------------------------------------------- gói chép sang máy GPU riêng
+MB = load("make_bundle")
+
+
+def test_bundle_code_digest_matches_training_code():
+    assert MB.code_digest(REPO / "Contrastive_V1") == CI.source_digest(TC.source_files()) == CI.LOCK["source"]
+
+
+def test_bat_files_are_crlf_ascii_and_use_the_runner():
+    for name in ("1_cai_dat.bat", "2_train.bat"):
+        b = (REPO / "pc" / "windows" / name).read_bytes()
+        assert b.isascii() and b.count(b"\n") == b.count(b"\r\n") > 10, name
+    setup = (REPO / "pc" / "windows" / "1_cai_dat.bat").read_text()
+    for step in ("setup_env.py", "prepare --downloads", "check --data", "smoke --data", "resnet50-19c8e357.pth"):
+        assert step in setup
+    assert 'train --data "%DATA%" --seeds %SEEDS%' in (REPO / "pc" / "windows" / "2_train.bat").read_text()
+
+
+def small_dataset(tmp):
+    """3 fold × 2 subject test; ảnh nhỏ; manifest sinh bằng make_manifest thật."""
+    from experiment_data import make_manifest
+    root, subjects = tmp / "local", [f"SN{i:03d}" for i in range(1, 7)]
+    (root / "list").mkdir(parents=True)
+    for s in subjects:
+        (root / "img" / s).mkdir(parents=True)
+        for j in range(3):
+            (root / "img" / s / f"{j}.png").write_bytes(f"{s}/{j}".encode() * 10)
+    for k in (1, 2, 3):
+        test = subjects[2 * (k - 1): 2 * k]
+        for part, subj in (("train", [s for s in subjects if s not in test]), ("test", test)):
+            paths = [f"{s}/{j}.png" for s in subj for j in range(3)]
+            (root / "list" / f"DISFA_{part}_img_path_fold{k}.txt").write_text("\n".join(paths))
+            lab = [[(j + i) % 2 for i in range(8)] for j in range(len(paths))]
+            (root / "list" / f"DISFA_{part}_label_fold{k}.txt").write_text("\n".join(" ".join(map(str, r)) for r in lab))
+            if part == "train":                                   # list thật chỉ có weight cho train
+                (root / "list" / f"DISFA_{part}_weight_fold{k}.txt").write_text("1")
+    splits = tmp / "splits_v2"
+    splits.mkdir()
+    for k in (1, 2, 3):
+        (splits / f"fold{k}.json").write_text(json.dumps(make_manifest(root, k, val_subject_count=1, check_images=False)))
+    return root, splits
+
+
+def test_bundle_then_prepare_gives_identical_images(tmp_path):
+    root, splits = small_dataset(tmp_path)
+    lock = dict(CI.LOCK, manifests={k: sha((splits / f"fold{k}.json").read_bytes()) for k in (1, 2, 3)})
+    out = tmp_path / "LVTS_TriLe"
+    with redirect_stdout(io.StringIO()):
+        digests = MB.build(root / "img", root / "list", splits, out, lock=lock, n_images=18)
+    assert sorted(digests) == [f"SN{i:03d}" for i in range(1, 7)]
+    assert (out / "1_cai_dat.bat").read_bytes() == (REPO / "pc" / "windows" / "1_cai_dat.bat").read_bytes()
+    assert MB.code_digest(out / "Thesis_Sym" / "Contrastive_V1") == CI.LOCK["source"]
+    record = json.loads((out / "tar_sha256.json").read_text())
+    assert record["tars"] == digests and all(sha((out / "sym_download" / "DISFA_img" / f"{s}.tar").read_bytes())
+                                             == d["sha256"] for s, d in digests.items())
+    (out / "sym_download" / "resnet50-19c8e357.pth").write_bytes(b"weights")      # 1_cai_dat.bat tải file này
+    with redirect_stdout(io.StringIO()):
+        PC.prepare(out / "sym_download", tmp_path / "DISFA", lock, weight=tmp_path / "ckpt" / "resnet50-19c8e357.pth",
+                   weight_prefix=sha(b"weights")[:8], n_images=18)
+    for p in (root / "img").rglob("*.png"):
+        assert (tmp_path / "DISFA" / "img" / p.relative_to(root / "img")).read_bytes() == p.read_bytes()
+    with pytest.raises(SystemExit, match="đã có nội dung"):
+        MB.build(root / "img", root / "list", splits, out, lock=lock, n_images=18)
+
+
+def test_bundle_tar_layout_is_cell_a(tmp_path):
+    """Cùng ảnh → cùng byte với tar mà cell A dựng trên Drive, nên so SHA-256 là so được ảnh."""
+    root, _ = small_dataset(tmp_path)
+    cell_a = tmp_path / "a.tar"
+    with tarfile.open(cell_a, "w", format=tarfile.GNU_FORMAT) as tar:       # đúng mấy dòng của cell A
+        for p in ["SN001/0.png", "SN001/1.png", "SN001/2.png"]:
+            data = (root / "img" / p).read_bytes()
+            info = tarfile.TarInfo("img/" + p)
+            info.size, info.mtime = len(data), 0
+            tar.addfile(info, io.BytesIO(data))
+    MB.write_tar(tmp_path / "b.tar", root / "img", ["SN001/0.png", "SN001/1.png", "SN001/2.png"])
+    assert cell_a.read_bytes() == (tmp_path / "b.tar").read_bytes()
+
+
+@pytest.mark.parametrize("how,msg", [("split", "khác bản đã khoá"), ("list", "khác bản manifest"), ("img", "Thiếu 1 ảnh")])
+def test_bundle_refuses_inconsistent_inputs(tmp_path, how, msg):
+    root, splits = small_dataset(tmp_path)
+    lock = dict(CI.LOCK, manifests={k: sha((splits / f"fold{k}.json").read_bytes()) for k in (1, 2, 3)})
+    if how == "split":
+        lock["manifests"][2] = "0" * 64
+    elif how == "list":
+        (root / "list" / "DISFA_train_label_fold1.txt").write_text("0")
+    else:
+        (root / "img" / "SN003" / "1.png").unlink()
+    with pytest.raises(SystemExit, match=msg):
+        MB.build(root / "img", root / "list", splits, tmp_path / "out", lock=lock, n_images=18)
