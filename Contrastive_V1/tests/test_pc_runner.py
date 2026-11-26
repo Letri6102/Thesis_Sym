@@ -189,7 +189,8 @@ def queue(tmp_path, seeds=(2,), prepare_runs=None, noop_resume=False, lock=None,
     if prepare_runs:
         prepare_runs(out / "runs_aug1", lock)
     with redirect_stdout(io.StringIO()):
-        PC.train(tmp_path / "data", list(seeds), out=out, lock=lock, run=fake_train(lock, calls, noop_resume, init), **kw)
+        PC.train(tmp_path / "data", list(seeds), out=out, lock=lock, run=fake_train(lock, calls, noop_resume, init),
+                 **{"here": lambda s: PC.PILOT_INIT, **kw})
     return calls, out
 
 
@@ -205,6 +206,12 @@ def test_train_seed_two_then_rerun(tmp_path):
     assert "full/fold3/seed2/last.pt" in names and "full/fold3/seed2/source/toy.py" in names
     again, _ = queue(tmp_path)
     assert again == []
+
+
+def fresh_log(out, name):
+    """Log vừa được ghi: dấu hiệu một tiến trình đang train run này."""
+    (Path(out) / "logs").mkdir(parents=True, exist_ok=True)
+    (Path(out) / "logs" / f"{time.strftime('%Y%m%d_%H%M%S')}_{name}.log").write_text("epoch 4/20 step 100/1000\n")
 
 
 def target(runs):
@@ -228,7 +235,8 @@ def test_train_repairs_history_after_last_epoch(tmp_path):
 
 
 @pytest.mark.parametrize("prep,msg", [
-    (lambda r, lock: write_run(target(r), "baseline", 1, 2, lock, epochs=3, age_min=1), "vừa được ghi"),
+    (lambda r, lock: (write_run(target(r), "baseline", 1, 2, lock, epochs=3), fresh_log(r.parent, "baseline_fold1_seed2")),
+     "vừa được ghi"),
     (lambda r, lock: write_run(target(r), "baseline", 1, 2, dict(lock, common=dict(lock["common"], lr=1.))), "lệch khoá"),
     (lambda r, lock: write_run(target(r), "baseline", 1, 2, lock, epochs=3, last=False), "không có last.pt"),
 ])
@@ -293,7 +301,8 @@ def import_zips(tmp_path, lock, prepare_drive=None):
         else:
             raise AssertionError(cmd)
     code = cell_i().replace("Path('/content/pc_import')", f"Path(r'{tmp_path / 'work'}')")
-    ns = dict(SYM=sym, RUNS=runs, SPLITS=ds_splits, DATA=ds_root, CODE=REPO / "Contrastive_V1", json=json, sys=__import__("sys"), time=time,
+    ns = dict(SYM=sym, RUNS=runs, SPLITS=ds_splits, DATA=ds_root, CODE=REPO / "Contrastive_V1", REPO=REPO, json=json,
+              sys=__import__("sys"), time=time,
               shutil=shutil, Path=Path, subprocess=types.SimpleNamespace(run=run),
               drive=types.SimpleNamespace(flush_and_unmount=lambda: None))
     with patch.object(CI, "LOCK", lock), redirect_stdout(io.StringIO()) as buf:
@@ -315,7 +324,8 @@ def test_cell_i_imports_and_never_overwrites(tmp_path):
     up = made_zips(tmp_path, lock)
     keep = lambda runs: write_run(runs / "full" / "fold2" / "seed2", "full", 2, 2, lock)              # Drive đã xong
     stale = lambda runs: write_run(runs / "full" / "fold3" / "seed2", "full", 3, 2, lock, epochs=4)   # dở, cũ
-    busy = lambda runs: write_run(runs / "baseline" / "fold3" / "seed2", "baseline", 3, 2, lock, epochs=4, age_min=2)
+    busy = lambda runs: (write_run(runs / "baseline" / "fold3" / "seed2", "baseline", 3, 2, lock, epochs=4),
+                         fresh_log(runs.parent, "baseline_fold3_seed2"))                       # Colab đang train run này
     sym, log = import_zips(tmp_path, lock, lambda r: (keep(r), stale(r), busy(r)))
     runs = sym / "runs_aug1"
     assert sorted(p.name for p in (up / "done").glob("*.zip")) == [
@@ -328,20 +338,15 @@ def test_cell_i_imports_and_never_overwrites(tmp_path):
     assert not list(runs.rglob("*.partial"))
 
 
-def test_cell_i_refuses_to_mix_machines(tmp_path):
-    """23/11: cả 18 run train trên máy 5090; Drive còn run Colab (L4) thì không nhập, để zip lại chờ đổi tên thư mục."""
+def test_cell_i_rejects_other_branch_or_broken_pair(tmp_path):
+    """26/11: run từ hai máy được trộn, nhưng không nhập bản lệch nhánh hay lệch khởi tạo với run cùng cặp."""
     lock = toy_lock()
     up = made_zips(tmp_path, lock)
-
-    def colab_run(runs):
-        rd = runs / "baseline" / "fold2" / "seed0"
-        write_run(rd, "baseline", 2, 0, lock)
-        (rd / "environment.json").write_text(json.dumps(dict(gpu="NVIDIA L4")))
-    sym, log = import_zips(tmp_path, lock, colab_run)
-    assert len(list(up.glob("*.zip"))) == 6 and not (up / "done").exists() and "NVIDIA L4" in log
-    shutil.rmtree(sym / "runs_aug1")                                    # chủ dự án đổi tên thư mục Colab
-    sym, log = import_zips(tmp_path, lock)
-    assert len(list((up / "done").glob("*.zip"))) == 6
+    other = lambda runs: write_run(runs / "baseline" / "fold1" / "seed2", "baseline", 1, 2, lock, epochs=4, init="9" * 64)
+    sym, log = import_zips(tmp_path, lock, other)
+    assert sorted(p.name for p in (up / "rejected").glob("*.zip")) == ["aug1_baseline_fold1_seed2.zip", "aug1_full_fold1_seed2.zip"]
+    assert "LỆCH NHÁNH" in log and "khác run cùng cặp" in log
+    assert len(list((up / "done").glob("*.zip"))) == 4
 
 
 def test_cell_i_rejects_drifted_or_unsafe_zips(tmp_path):
@@ -572,7 +577,7 @@ def refit_setup(tmp_path):
     lock = toy_lock(data / "splits_v2")
     out = tmp_path / "out"
     with redirect_stdout(io.StringIO()):
-        PC.train(data, [2], out=out, lock=lock, run=fake_train(lock, []))
+        PC.train(data, [2], out=out, lock=lock, run=fake_train(lock, []), here=lambda s: PC.PILOT_INIT)
     return data, lock, out
 
 
@@ -594,28 +599,28 @@ def test_pc_refit_runs_after_train_and_packs(tmp_path):
     data, lock, out = refit_setup(tmp_path)
     calls = []
     with redirect_stdout(io.StringIO()):
-        PC.refit(data, [2], out=out, lock=lock, run=fake_refit(lock, calls))
+        PC.refit(data, [2], out=out, lock=lock, run=fake_refit(lock, calls), here=lambda s: PC.PILOT_INIT)
     assert len(calls) == 6 and all(c["stop_after"] == 1 and c["epochs"] == 20 for c in calls)   # E = epoch (a) chọn
     assert all(Path(c["manifest"]).parent.name == "manifests" for c in calls)
     zips = sorted(p.name for p in (out / "upload").glob("refit1_*.zip"))
     assert len(zips) == 6
     assert "full/fold2/seed2/refit.json" in zipfile.ZipFile(out / "upload" / "refit1_full_fold2_seed2.zip").namelist()
     with redirect_stdout(io.StringIO()):
-        PC.refit(data, [2], out=out, lock=lock, run=fake_refit(lock, calls))                   # chạy lại: không làm lại
+        PC.refit(data, [2], out=out, lock=lock, run=fake_refit(lock, calls), here=lambda s: PC.PILOT_INIT)   # chạy lại
     assert len(calls) == 6
 
 
 def test_cell_i_imports_refit_only_with_its_run_a(tmp_path):
     data, lock, out = refit_setup(tmp_path)
     with redirect_stdout(io.StringIO()):
-        PC.refit(data, [2], out=out, lock=lock, run=fake_refit(lock, []))
+        PC.refit(data, [2], out=out, lock=lock, run=fake_refit(lock, []), here=lambda s: PC.PILOT_INIT)
     up = tmp_path / "Sym" / "upload"
     up.mkdir(parents=True)
     for z in (out / "upload").glob("refit1_*_fold1_*.zip"):                 # chỉ refit fold 1, thiếu run (a) trên Drive
         shutil.copy(z, up / z.name)
     DS[tmp_path] = (data, data / "splits_v2")
     sym, log = import_zips(tmp_path, lock)
-    assert len(list((up / "rejected").glob("refit1_*.zip"))) == 2 and "thiếu run (a)" in log
+    assert len(list(up.glob("refit1_*.zip"))) == 2 and "chưa có run (a)" in log         # để lại, chờ run (a)
     for z in (out / "upload").glob("*_fold2_*.zip"):                        # đủ (a) + refit của fold 2
         shutil.copy(z, up / z.name)
     sym, log = import_zips(tmp_path, lock)
@@ -728,12 +733,147 @@ def test_launch_prints_live_progress(tmp_path):
     buf = io.StringIO()
     with redirect_stdout(buf):
         text = PC.launch([sys.executable, "-c", code], tmp_path / "out" / "logs" / "20261124_000000_full_fold1_seed0.log")
-    shown = buf.getvalue()
-    assert "epoch 1/20" in shown and "tổng" in shown and "ep 1" in shown and "warnings.warn" not in shown
+    shown = buf.getvalue()                                             # không phải màn hình (Colab đọc qua pipe)
+    assert "epoch 1/20" not in shown and "tổng" in shown and "ep 1" in shown and "warnings.warn" not in shown
     assert text.count("step") == 10                                    # log vẫn đủ mọi dòng
+
+    class Screen(io.StringIO):
+        def isatty(self):
+            return True
+    buf = Screen()
+    with redirect_stdout(buf):
+        PC.launch([sys.executable, "-c", code], tmp_path / "out" / "logs" / "20261124_000001_full_fold1_seed0.log")
+    assert "\r   epoch 1/20" in buf.getvalue()                             # màn hình thật: dòng tiến độ tại chỗ
 
 
 def test_progress_monitor_bat():
     b = (REPO / "pc" / "windows" / "theo_doi.bat").read_bytes()
     assert b.count(b"\r\n") == b.count(b"\n") and max(b) < 128
     assert b"progress --watch 60" in b and b"train_contrastive" not in b
+
+
+# ---------------------------------------------------------------- bàn giao run giữa Colab và máy 5090 (26/11)
+def set_hist(rd, vals):
+    """Lịch sử tuỳ ý (mỗi phần tử là val F1 của một epoch) để dựng hai nhánh khác nhau."""
+    (rd / "history.json").write_text(json.dumps([dict(epoch=e, val=dict(macro_f1=f), seconds=60.)
+                                                 for e, f in enumerate(vals, 1)]))
+
+
+def run_all(out, lock, seeds, folds, here=PC.PILOT_INIT, machine="L4", init=lambda v: PC.PILOT_INIT, **kw):
+    calls = []
+    with redirect_stdout(io.StringIO()) as buf:
+        left = PC.train(Path("data"), list(seeds), list(folds), out=out, lock=lock, run=fake_train(lock, calls, init=init),
+                        here=lambda s: here, machine=machine, **kw)
+    return calls, left, buf.getvalue()
+
+
+def test_relation_by_history_and_init(tmp_path):
+    lock = toy_lock()
+    a, b = tmp_path / "a", tmp_path / "b"
+    assert PC.relation(a, b) == "new"
+    write_run(a, "full", 1, 0, lock, epochs=5)
+    write_run(b, "full", 1, 0, lock, epochs=8)
+    assert PC.relation(a, b) == "ahead" and PC.relation(b, a) == "behind" and PC.relation(a, a) == "same"
+    set_hist(b, [.75, .75, .1, .2])                                  # khác từ epoch 3: hai nhánh
+    assert PC.relation(a, b) == "fork"
+    write_run(b, "full", 1, 0, lock, epochs=8, init="9" * 64)        # cùng lịch sử nhưng khác khởi tạo
+    assert PC.relation(a, b) == "fork"
+
+
+def test_handoff_round_trip_5090_colab_5090(tmp_path):
+    lock = toy_lock()
+    pc, drive = tmp_path / "pc_runs", tmp_path / "Sym"
+    runs = pc / "runs_aug1"
+    for v in ("baseline", "full"):                                   # 5090: cặp fold 2 xong
+        write_run(runs / v / "fold2" / "seed0", v, 2, 0, lock)
+    write_run(runs / "baseline" / "fold1" / "seed0", "baseline", 1, 0, lock, epochs=5)   # 5090: dở 5 epoch
+    with redirect_stdout(io.StringIO()):
+        sent = PC.send(out=pc, lock=lock)
+    assert sorted(z.name for z in sent) == ["aug1_baseline_fold2_seed0.zip", "aug1_full_fold2_seed0.zip",
+                                            "partial_aug1_baseline_fold1_seed0.zip"]
+    assert (runs / "baseline" / "fold1" / "seed0" / PC.HANDED_FILE).exists()
+    calls, left, log = run_all(pc, lock, [0], [1])                   # 5090 không train tiếp run đã bàn giao
+    assert [c["variant"] for c in calls] == ["full"] and left == ["baseline_fold1_seed0"] and "đã bàn giao" in log
+
+    with redirect_stdout(io.StringIO()):                             # Drive nhận (cell I)
+        got = PC.receive(pc / "upload", out=drive, lock=lock)
+    assert set(got.values()) == {"installed"} and PC.n_epochs(drive / "runs_aug1" / "baseline" / "fold1" / "seed0") == 5
+    assert (drive / "runs_aug1" / "baseline" / "fold1" / "seed0" / PC.INIT_FILE).exists()
+    calls, left, _ = run_all(drive, lock, [0], [1], pack_zip=False)  # Colab train tiếp run dở (full f1 đã xong ở 5090)
+    assert [(c["variant"], bool(c["resume"])) for c in calls] == [("baseline", True)] and not left
+    rec = json.loads((drive / "runs_aug1" / "baseline" / "fold1" / "seed0" / PC.MACHINES_FILE).read_text())
+    assert rec[-1]["gpu"] == "L4" and rec[-1]["epochs"] == [6, 20]
+
+    with redirect_stdout(io.StringIO()):                             # Colab bàn giao lại: chỉ bản tóm tắt
+        sent = PC.send(out=drive, dest=drive / "handoff", complete="stub", lock=lock)
+    assert [z.name[:6] for z in sent] == ["stubs_"]
+    with redirect_stdout(io.StringIO()):
+        got = PC.receive(drive / "handoff", out=pc, lock=lock)
+    assert got["aug1_baseline_fold1_seed0"] == "installed"                        # dở 5 epoch → bản tóm tắt 20 epoch
+    assert got["aug1_full_fold1_seed0"] == got["aug1_full_fold2_seed0"] == "duplicate"   # giữ bản có trọng số
+    rd = runs / "baseline" / "fold1" / "seed0"
+    assert (rd / PC.STUB_FILE).exists() and not (rd / "last.pt").exists() and PC.is_done(rd, 20)
+    assert len(list((pc / "failed_runs").glob("aug1_baseline_fold1_seed0_*_truoc_nhap"))) == 1
+    assert PC.a_problems(rd, "baseline", 1, 0, lock) == [] and PC.pair_problem(runs, 1, 0, 20) is None
+    calls, left, _ = run_all(pc, lock, [0], [1, 2])
+    assert calls == [] and left == []                                # không train lại run đã xong ở máy kia
+
+
+def test_receive_refuses_fork_and_keeps_both(tmp_path):
+    lock = toy_lock()
+    pc, drive = tmp_path / "pc_runs", tmp_path / "Sym"
+    a = pc / "runs_aug1" / "full" / "fold3" / "seed1"
+    b = drive / "runs_aug1" / "full" / "fold3" / "seed1"
+    write_run(a, "full", 3, 1, lock, epochs=6)
+    write_run(b, "full", 3, 1, lock, epochs=4)
+    set_hist(b, [.75, .75, .1, .1])                                  # Drive đã train nhánh khác
+    with redirect_stdout(io.StringIO()):
+        PC.send(out=pc, lock=lock)
+    with redirect_stdout(io.StringIO()) as buf:
+        got = PC.receive(pc / "upload", out=drive, lock=lock)
+    assert got == {"aug1_full_fold3_seed1": "rejected"} and "LỆCH NHÁNH" in buf.getvalue()
+    assert PC.n_epochs(b) == 4 and (pc / "upload" / "rejected" / "partial_aug1_full_fold3_seed1.zip").exists()
+
+
+def test_pair_rule_needs_same_init_to_create(tmp_path):
+    lock = toy_lock()
+    out = tmp_path / "Sym"
+    write_run(out / "runs_aug1" / "baseline" / "fold1" / "seed1", "baseline", 1, 1, lock, epochs=7, init="5" * 64)
+    calls, left, log = run_all(out, lock, [1], [1], here="6" * 64, init=lambda v: "5" * 64, pack_zip=False)
+    assert [c["variant"] for c in calls] == ["baseline"]              # run dở của máy kia: resume được
+    assert left == ["full_fold1_seed1"] and "khởi tạo 555555555555" in log
+    calls, left, _ = run_all(out, lock, [1], [1], here="5" * 64, init=lambda v: "5" * 64, pack_zip=False)
+    assert [c["variant"] for c in calls] == ["full"] and left == []   # máy cùng khởi tạo thì tạo được
+
+
+def test_send_waits_for_running_training(tmp_path):
+    lock = toy_lock()
+    pc = tmp_path / "pc_runs"
+    write_run(pc / "runs_aug1" / "full" / "fold1" / "seed0", "full", 1, 0, lock, epochs=3)
+    fresh_log(pc, "full_fold1_seed0")
+    with pytest.raises(SystemExit, match="vẫn đang train"), redirect_stdout(io.StringIO()):
+        PC.send(out=pc, lock=lock)
+    with redirect_stdout(io.StringIO()):
+        assert len(PC.send(out=pc, lock=lock, old_session_dead=True)) == 1
+
+
+def test_stub_marker_shared_with_refit():
+    from refit import run as R
+    assert R.STUB_FILE == PC.STUB_FILE
+
+
+def test_handoff_bat_files():
+    for name in ("ban_giao.bat", "train_data_co_san.bat"):
+        b = (REPO / "pc" / "windows" / name).read_bytes()
+        assert b.count(b"\r\n") == b.count(b"\n") and max(b) < 128
+    assert b"send --old-session-dead" in (REPO / "pc" / "windows" / "ban_giao.bat").read_bytes()
+    run_bat = (REPO / "pc" / "windows" / "train_data_co_san.bat").read_bytes()
+    assert run_bat.index(b"receive --data") < run_bat.index(b"train --data")
+
+
+def test_colab_notebook_matches_cells():
+    nb = json.loads((REPO / "notebooks" / "Train_Colab.ipynb").read_text(encoding="utf-8"))
+    code = ["".join(c["source"]) for c in nb["cells"] if c["cell_type"] == "code"]
+    md = (REPO / "COLAB_CELLS.md").read_text(encoding="utf-8")
+    assert "IMAGES   = True" in code[0] and [c.split(":")[0] for c in code[1:]] == ["# ==== Cell I", "# ==== Cell G2", "# ==== Cell M"]
+    assert all(c in md for c in code[1:])

@@ -27,6 +27,8 @@ if str(CODE) not in sys.path:
 from stage2_decoder.check_stage1 import best_point  # noqa: E402
 from stage2_decoder.contrast_ci import LOCK, config_problems, jobs as all_jobs, run_problems  # noqa: E402
 
+STUB_FILE = "DONE_ELSEWHERE.json"           # trùng pc/train_18_run.py: bản tóm tắt của run xong ở máy kia
+
 PROBE = 64
 
 
@@ -109,6 +111,8 @@ def jobs(runs_a, root, splits, data, seeds=(0, 1, 2), folds=(1, 2, 3), lock=LOCK
             continue
         run_a = Path(runs_a) / v / f"fold{k}" / f"seed{s}"
         bad = run_problems(run_a, v, k, s, lock)
+        if (run_a / STUB_FILE).exists():            # run (a) xong ở máy kia: bản tóm tắt không có best.pt, đủ để biết E
+            bad = [b for b in bad if b != "thiếu best.pt"]
         if bad:
             skipped.append(f"{v}/fold{k}/seed{s}: run (a) chưa dùng được ({bad[0]})")
             continue

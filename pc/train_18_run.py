@@ -364,6 +364,7 @@ def launch(cmd, log):
     lines = []
     out = log.parent.parent                          # <OUT>/logs/<log>: tiến độ tính trên <OUT>
     live, inline, shown = "smoke" not in log.name, False, 0.0
+    tty = sys.stdout.isatty()
 
     def newline():
         nonlocal inline
@@ -385,7 +386,7 @@ def launch(cmd, log):
                     say(f"   ep{r['epoch']:>2}  wa={r['train']['wa']:.4f}  valF1={r['val']['macro_f1']:.3f}  "
                         f"{r['seconds'] / 60:.1f} phút" + (f"  | {progress_line(out)}" if live else ""))
                 elif step:
-                    if live and time.time() - shown > 20:      # dòng tiến độ tại chỗ, làm mới mỗi 20 giây
+                    if live and tty and time.time() - shown > 20:   # dòng tiến độ tại chỗ, làm mới mỗi 20 giây
                         shown = time.time()
                         e, n_e, s, n = map(int, step.groups())
                         text = f"   epoch {e}/{n_e} {100 * s / n:3.0f}% | {progress_line(out)}"
@@ -412,7 +413,11 @@ def n_epochs(run):
 
 
 def is_done(run, epochs):
-    return n_epochs(run) >= epochs and all((run / n).exists() for n in ("config.json", "best.pt", "last.pt"))
+    """Đủ epoch và đủ file; bản tóm tắt DONE_ELSEWHERE (run xong ở máy kia, không có trọng số) cũng tính là xong."""
+    run = Path(run)
+    if n_epochs(run) < epochs or not (run / "config.json").exists():
+        return False
+    return (run / STUB_FILE).exists() or all((run / n).exists() for n in ("best.pt", "last.pt"))
 
 
 def init_hash(run):
@@ -429,31 +434,59 @@ def pair_problem(runs, k, s, epochs):
     rds = [Path(runs) / v / f"fold{k}" / f"seed{s}" for v in ("baseline", "full")]
     if not all(is_done(rd, epochs) for rd in rds):
         return None
-    a, b = (init_hash(rd) for rd in rds)
+    a, b = (run_init(rd) for rd in rds)
     if a is None or a != b:
         return f"fold{k}/seed{s}: baseline {str(a)[:12]}…, full {str(b)[:12]}…"
     return None
 
 
-def pack(run, v, k, s, out, prefix="aug1"):
-    """Nén một run xong thành zip để tải lên MyDrive/Sym/upload/ (cell I trên Colab giải nén và kiểm)."""
-    up = Path(out) / "upload"
+def pack(run, v, k, s, out, prefix="aug1", dest=None):
+    """Nén một run thành zip để tải lên MyDrive/Sym/upload/ (cell I trên Colab giải nén và kiểm)."""
+    up = Path(dest) if dest else Path(out) / "upload"
     up.mkdir(parents=True, exist_ok=True)
     target = up / f"{prefix}_{v}_fold{k}_seed{s}.zip"
     tmp = target.with_suffix(".zip.partial")
     with zipfile.ZipFile(tmp, "w", zipfile.ZIP_STORED) as z:
         for p in sorted(run.rglob("*")):
-            if p.is_file() and not p.name.endswith(".tmp"):
+            if p.is_file() and not p.name.endswith(".tmp") and p.name != HANDED_FILE:
                 z.write(p, f"{v}/fold{k}/seed{s}/{p.relative_to(run).as_posix()}")
     os.replace(tmp, target)
     return target
 
 
-def train(data, seeds, folds=(1, 2, 3), out=OUT, lock=LOCK, old_session_dead=False, run=launch):
+def _busy(out, name, old_session_dead):
+    """Run đang được một tiến trình khác train (log của nó vừa được ghi) thì dừng, tránh hai nơi cùng ghi một run.
+    Xét log trong <OUT>/logs, không xét file của run: run vừa nhận từ máy kia có file mới nhưng không ai đang train."""
+    age = log_age(out, name)
+    if age is not None and age < BUSY_MIN and not old_session_dead:
+        raise SystemExit(f"{name}: log vừa được ghi {age:.0f} phút trước, có thể một tiến trình khác đang train. "
+                         f"Đợi {BUSY_MIN} phút hoặc thêm --old-session-dead nếu chắc chắn đã tắt")
+
+
+def _handed(rd, name, reclaim, skipped):
+    """Run đã bàn giao cho máy kia: không train tiếp ở đây (tránh hai nhánh), trừ khi lấy lại bằng --reclaim."""
+    marker = Path(rd) / HANDED_FILE
+    if not marker.exists():
+        return False
+    if reclaim:
+        marker.unlink()
+        say(f"  {name}: lấy lại run đã bàn giao (--reclaim)")
+        return False
+    say(f"  bỏ qua {name}: đã bàn giao cho máy kia ({marker.read_text(encoding='utf-8').strip()}). "
+        "Nhận bản mới về, hoặc chạy với --reclaim nếu máy kia chưa train tiếp run này")
+    skipped.append(name)
+    return True
+
+
+def train(data, seeds, folds=(1, 2, 3), out=OUT, lock=LOCK, old_session_dead=False, run=launch, pack_zip=True,
+          reclaim=False, here=None, machine=None):
+    """Train các run (a) chưa xong. Chạy được trên máy 5090 và trên Colab (--out MyDrive/Sym): run dở do máy kia train
+    được resume ở đây; run mới chỉ được tạo khi run cùng cặp (nếu đã có) có cùng hash khởi tạo với máy này."""
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     runs = out / "runs_aug1"
     epochs = lock["common"]["epochs"]
+    here = here or init_here
     for v, k, s in jobs():
         cfg = runs / v / f"fold{k}" / f"seed{s}" / "config.json"
         if cfg.exists():
@@ -463,18 +496,16 @@ def train(data, seeds, folds=(1, 2, 3), out=OUT, lock=LOCK, old_session_dead=Fal
     todo = [(v, k, s) for v, k, s in jobs() if s in seeds and k in folds
             and not is_done(runs / v / f"fold{k}" / f"seed{s}", epochs)]
     say(f"Máy này: {len(todo)} run cần train ({', '.join(f'{v}/f{k}/s{s}' for v, k, s in todo) or 'không có'})")
+    skipped = []
     for i, (v, k, s) in enumerate(todo, 1):
         rd, name = runs / v / f"fold{k}" / f"seed{s}", f"{v}_fold{k}_seed{s}"
         free = shutil.disk_usage(out).free / 1e9
         say(f"\n[{i}/{len(todo)}] {name} | ổ trống {free:.0f} GB")
         if free < MIN_FREE_GB:
             raise SystemExit(f"Ổ còn {free:.0f} GB, cần {MIN_FREE_GB} GB: dọn pc_runs/upload sau khi đã tải lên Drive")
-        seen = [p for p in (rd / "config.json", rd / "history.json", rd / "last.pt", rd / "best.pt") if p.exists()]
-        if seen and not old_session_dead:
-            age = (time.time() - max(p.stat().st_mtime for p in seen)) / 60
-            if age < BUSY_MIN:
-                raise SystemExit(f"{name} vừa được ghi {age:.0f} phút trước: có thể một tiến trình khác đang train. "
-                                 f"Đợi {BUSY_MIN} phút hoặc thêm --old-session-dead nếu chắc chắn đã tắt")
+        if _handed(rd, name, reclaim, skipped):
+            continue
+        _busy(out, name, old_session_dead)
         extra = []
         if (rd / "last.pt").exists():
             extra = ["--resume", str(rd / "last.pt")]
@@ -485,7 +516,17 @@ def train(data, seeds, folds=(1, 2, 3), out=OUT, lock=LOCK, old_session_dead=Fal
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(rd), str(dest))
             say(f"  lần trước bị ngắt trong epoch 1 → cất sang {dest}, train lại")
-        run(train_cmd(data, v, k, s, rd, lock, extra), out / "logs" / f"{time.strftime('%Y%m%d_%H%M%S')}_{name}.log")
+        if not extra:
+            bad = partner_problem(runs, v, k, s, here)
+            if bad:
+                say(f"  bỏ qua {name}: {bad}. Run này phải được tạo trên máy có cùng khởi tạo với run cùng cặp")
+                skipped.append(name)
+                continue
+        before = n_epochs(rd)
+        try:
+            run(train_cmd(data, v, k, s, rd, lock, extra), out / "logs" / f"{time.strftime('%Y%m%d_%H%M%S')}_{name}.log")
+        finally:
+            record_machine(rd, machine, before)
         if n_epochs(rd) < epochs and (rd / "last.pt").exists():     # bị ngắt giữa ghi last.pt và history.json
             import torch
             hist = torch.load(rd / "last.pt", map_location="cpu", weights_only=False)["history"]
@@ -493,34 +534,62 @@ def train(data, seeds, folds=(1, 2, 3), out=OUT, lock=LOCK, old_session_dead=Fal
         bad = run_problems(rd, v, k, s, lock)
         if bad or not is_done(rd, epochs):
             raise SystemExit(f"{name} chưa xong hoặc lệch khoá: {bad}")
+        write_init(rd)
         bad = pair_problem(runs, k, s, epochs)
         if bad:
             raise SystemExit(f"Hai variant cùng seed khởi tạo KHÁC nhau ({bad}): full − baseline không còn là so cặp. "
                              "Dừng lại, gửi Claude log.")
-        say(f"  xong → {pack(rd, v, k, s, out)}  (tải lên MyDrive/Sym/upload/)")
-    say(f"\nXONG phần của máy này. Zip chờ tải lên: {sorted(p.name for p in (out / 'upload').glob('*.zip'))}")
+        say(f"  xong → {pack(rd, v, k, s, out)}  (tải lên MyDrive/Sym/upload/)" if pack_zip else "  xong")
+    if skipped:
+        say(f"\nĐể lại {len(skipped)} run: {', '.join(skipped)}")
+    say("\nXONG phần của máy này." + (f" Zip chờ tải lên: {sorted(p.name for p in (out / 'upload').glob('*.zip'))}"
+                                     if pack_zip else ""))
+    return skipped
 
 
 # ---------------------------------------------------------------- refit (dòng b)
-def refit(data, seeds, folds=(1, 2, 3), out=OUT, lock=LOCK, old_session_dead=False, run=launch):
-    """Refit các run (a) đã xong trên máy này: train lại trên đủ 18 subject, dừng ở epoch E (Contrastive_V1/refit)."""
+def refit(data, seeds, folds=(1, 2, 3), out=OUT, lock=LOCK, old_session_dead=False, run=launch, pack_zip=True,
+          reclaim=False, here=None, machine=None):
+    """Refit các run (a) đã xong: train lại trên đủ 18 subject, dừng ở epoch E (Contrastive_V1/refit).
+    Run (a) xong ở máy kia (bản tóm tắt DONE_ELSEWHERE) cũng refit được: chỉ cần history của nó để biết E."""
     from refit import run as R
     out = Path(out)
+    here = here or init_here
     todo, skipped = R.jobs(out / "runs_aug1", out / "runs_refit1", Path(data) / "splits_v2", data, seeds, folds, lock)
     for x in skipped:
         say(f"  bỏ qua {x}")
     names = [f"{j['variant']}/f{j['fold']}/s{j['seed']} E={j['E']}" for j in todo]
     say(f"Refit: {len(todo)} run ({', '.join(names) or 'không có'})")
+    left = []
     for i, j in enumerate(todo, 1):
-        name = f"refit1_{j['variant']}_fold{j['fold']}_seed{j['seed']}"
+        v, k, s, rd = j["variant"], j["fold"], j["seed"], Path(j["out"])
+        name = f"refit1_{v}_fold{k}_seed{s}"
         say(f"\n[{i}/{len(todo)}] {name} | dừng sau epoch {j['E']}")
-        moved = R.clear_stale(j, out / "failed_runs", BUSY_MIN, old_session_dead)
+        if _handed(rd, name, reclaim, left):
+            continue
+        _busy(out, name, old_session_dead)
+        moved = R.clear_stale(j, out / "failed_runs", BUSY_MIN, old_session_dead=True)   # đã xét bận bằng log ở trên
         if moved:
             say(f"  lần trước bị ngắt trong epoch 1 → cất sang {moved}")
-        run(R.one_cmd(j, data, lock=lock), out / "logs" / f"{time.strftime('%Y%m%d_%H%M%S')}_{name}.log")
+        if not (rd / "last.pt").exists():
+            bad = partner_problem(out / "runs_refit1", v, k, s, here)
+            if bad:
+                say(f"  bỏ qua {name}: {bad}. Run này phải được tạo trên máy có cùng khởi tạo với run cùng cặp")
+                left.append(name)
+                continue
+        before = n_epochs(rd)
+        try:
+            run(R.one_cmd(j, data, lock=lock), out / "logs" / f"{time.strftime('%Y%m%d_%H%M%S')}_{name}.log")
+        finally:
+            record_machine(rd, machine, before)
         R.finish(j, lock)
-        say(f"  xong → {pack(Path(j['out']), j['variant'], j['fold'], j['seed'], out, prefix='refit1')}")
-    say(f"\nXONG refit. Zip chờ tải lên: {sorted(p.name for p in (out / 'upload').glob('refit1_*.zip'))}")
+        write_init(rd)
+        say(f"  xong → {pack(rd, v, k, s, out, prefix='refit1')}" if pack_zip else "  xong")
+    if left:
+        say(f"\nĐể lại {len(left)} run: {', '.join(left)}")
+    say("\nXONG refit." + (f" Zip chờ tải lên: {sorted(p.name for p in (out / 'upload').glob('refit1_*.zip'))}"
+                          if pack_zip else ""))
+    return left
 
 
 # ---------------------------------------------------------------- smoke
@@ -563,6 +632,313 @@ def smoke(data, out=OUT, lock=LOCK, keep=False, run=launch):
     return dict(init=init, same_as_colab=init == PILOT_INIT, runs=res)
 
 
+# ---------------------------------------------------------------- bàn giao run giữa Colab và máy này (26/11)
+# Drive (MyDrive/Sym) là bản chính. Mỗi lúc chỉ MỘT nơi train một run: nơi gửi đánh dấu HANDED_OFF và không train tiếp
+# run đó, nơi nhận chỉ thay bản đang có khi bản nhận là phần nối tiếp (lịch sử cũ là phần đầu của lịch sử mới).
+STUB_FILE, HANDED_FILE, INIT_FILE, MACHINES_FILE = "DONE_ELSEWHERE.json", "HANDED_OFF.json", "init.json", "machines.json"
+STUB_KEEP = ("config.json", "history.json", "environment.json", "manifest.json", INIT_FILE, MACHINES_FILE, "refit.json")
+KIND_DIR = {"aug1": "runs_aug1", "refit1": "runs_refit1"}
+OTHER = {"baseline": "full", "full": "baseline"}
+ZIP_RE = re.compile(r"(partial_)?(aug1|refit1)_(baseline|full)_fold([123])_seed([012])")
+INIT_PROBE = r"""
+import sys
+import train_contrastive as TC
+TC.seed_all(int(sys.argv[1]))          # đúng thứ tự trong train_contrastive.train(): seed_all rồi tạo mô hình
+m = TC.MEFARGStage1(num_aus=8, num_expr=7, backbone=sys.argv[2], use_contrastive=True, proj_dim=128, pretrained=True)
+print("INIT" + TC.state_digest(m))
+"""
+_INIT_CACHE = {}
+
+
+def init_here(seed, arc="resnet50"):
+    """Hash khởi tạo mà máy này sẽ tạo cho seed (khởi tạo trên CPU, lệch bit theo CPU/hệ điều hành)."""
+    if seed not in _INIT_CACHE:
+        r = subprocess.run([sys.executable, "-c", INIT_PROBE, str(seed), arc], cwd=CODE, capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", env=dict(os.environ, PYTHONUTF8="1"))
+        line = next((x for x in r.stdout.splitlines() if x.startswith("INIT")), None)
+        if r.returncode or not line:
+            raise SystemExit("Không tính được hash khởi tạo trên máy này:\n" + r.stderr[-2000:])
+        _INIT_CACHE[seed] = line[4:].strip()
+    return _INIT_CACHE[seed]
+
+
+def run_init(rd):
+    rd = Path(rd)
+    try:
+        return json.loads((rd / INIT_FILE).read_text(encoding="utf-8"))["initial_detector_hash"]
+    except (OSError, ValueError, KeyError):
+        return init_hash(rd) if (rd / "last.pt").exists() else None
+
+
+def write_init(rd):
+    h = run_init(rd)
+    if h and not (Path(rd) / INIT_FILE).exists():
+        (Path(rd) / INIT_FILE).write_text(json.dumps(dict(initial_detector_hash=h)), encoding="utf-8")
+    return h
+
+
+def partner_problem(runs, v, k, s, here):
+    """Run cùng cặp đã có thì run này phải có cùng hash khởi tạo, tức là phải được tạo trên máy cho ra hash đó."""
+    pr = Path(runs) / OTHER[v] / f"fold{k}" / f"seed{s}"
+    if not (pr / "config.json").exists():
+        return None
+    pi = run_init(pr)
+    if pi is None:
+        return None
+    mine = here(s)
+    return None if pi == mine else f"{OTHER[v]} cùng cặp khởi tạo {pi[:12]}…, máy này cho {mine[:12]}…"
+
+
+def record_machine(rd, machine, before):
+    """Ghi máy nào train epoch nào (cần cho phần công bố khi run chạy qua hai máy)."""
+    rd = Path(rd)
+    after = n_epochs(rd)
+    if after <= before or not rd.exists():
+        return
+    f = rd / MACHINES_FILE
+    try:
+        rec = json.loads(f.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        rec = []
+    rec.append(dict(gpu=machine or "?", epochs=[before + 1, after], at=time.strftime("%Y-%m-%d %H:%M")))
+    f.write_text(json.dumps(rec, indent=1), encoding="utf-8")
+
+
+def relation(cur, new):
+    """Quan hệ của bản nhận (new) với bản đang có (cur) của cùng một run:
+    'new' chưa có bản nào; 'ahead' bản nhận nối tiếp và đi xa hơn; 'same'; 'behind' bản nhận là phần đầu của bản đang có;
+    'fork' hai nhánh khác nhau (không tự quyết)."""
+    if not (Path(cur) / "config.json").exists():
+        return "new"
+    ic, inn = run_init(cur), run_init(new)
+    if ic and inn and ic != inn:
+        return "fork"
+    hc, hn = _hist(cur), _hist(new)
+    if hn[:len(hc)] == hc:
+        return "same" if len(hn) == len(hc) else "ahead"
+    if hc[:len(hn)] == hn:
+        return "behind"
+    return "fork"
+
+
+def a_problems(run_a, v, k, s, lock):
+    """Như run_problems, nhưng run (a) xong ở máy kia (bản tóm tắt, không có best.pt) vẫn dùng được cho refit."""
+    bad = run_problems(Path(run_a), v, k, s, lock)
+    return [b for b in bad if b != "thiếu best.pt"] if (Path(run_a) / STUB_FILE).exists() else bad
+
+
+def _copy(src, dst, timeout=3600):
+    """Chép file/thư mục. Trên Linux (Colab, Drive) dùng cp có timeout: đọc Drive có thể treo không báo lỗi."""
+    src, dst = Path(src), Path(dst)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if os.name != "nt":
+        subprocess.run(["cp", "-r", str(src), str(dst)], check=True, timeout=timeout)
+    elif src.is_dir():
+        shutil.copytree(src, dst)
+    else:
+        shutil.copyfile(src, dst)
+
+
+def _done(kind, rd, epochs):
+    return is_done(rd, epochs) if kind == "aug1" else (Path(rd) / "refit.json").exists() and (
+        (Path(rd) / STUB_FILE).exists() or (Path(rd) / "last.pt").exists())
+
+
+def send(out=OUT, dest=None, complete="zip", lock=LOCK, work=None, copy=_copy, old_session_dead=False, to="máy kia"):
+    """Bàn giao cho máy kia. Run dở: zip đủ file để train tiếp (partial_<loại>_...), rồi đánh dấu HANDED_OFF ở đây.
+    Run xong: complete='zip' gửi zip đầy đủ (máy 5090 → Drive: Colab cần best.pt để evaluate);
+              complete='stub' chỉ gửi file nhỏ trong một zip stubs_ (Drive → máy 5090: đủ để bỏ qua và để refit biết E).
+    work: thư mục tạm trên ổ cục bộ (Colab) — chép run từ Drive về đây trước khi nén."""
+    out, epochs = Path(out), lock["common"]["epochs"]
+    dest = Path(dest or out / "upload")
+    dest.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    made, notes, stubs = [], [], []
+    for kind, root in KIND_DIR.items():
+        for v, k, s in jobs():
+            rd, name = out / root / v / f"fold{k}" / f"seed{s}", f"{kind}_{v}_fold{k}_seed{s}"
+            if not (rd / "config.json").exists() or (rd / STUB_FILE).exists():
+                continue                                    # chưa có, hoặc là bản tóm tắt của run xong ở máy kia
+            if _done(kind, rd, epochs):
+                if complete == "stub":
+                    stubs.append((root, v, k, s, rd))
+                elif not any((d / f"{name}.zip").exists() for d in (dest, dest / "done", dest / "duplicate")):
+                    made.append(pack(rd, v, k, s, out, prefix=kind, dest=dest))
+                continue
+            if not (rd / "last.pt").exists():
+                notes.append(f"{name}: chưa xong epoch nào, không có gì để gửi")
+                continue
+            log_name = f"{'refit1_' if kind == 'refit1' else ''}{v}_fold{k}_seed{s}"
+            age = log_age(out, log_name)
+            if age is not None and age < BUSY_MIN and not old_session_dead:
+                raise SystemExit(f"{log_name}: log vừa được ghi {age:.0f} phút trước, có thể vẫn đang train. "
+                                 f"Dừng train trước, đợi {BUSY_MIN} phút hoặc xác nhận đã dừng (old_session_dead)")
+            src = rd
+            if work:
+                src = Path(work) / name
+                shutil.rmtree(src, ignore_errors=True)
+                copy(rd, src)
+            write_init(src)
+            zp = pack(src, v, k, s, out, prefix=f"partial_{kind}", dest=Path(work) if work else dest)
+            if work:
+                copy(zp, dest / zp.name)
+                zp.unlink()
+                shutil.rmtree(src, ignore_errors=True)
+                zp = dest / zp.name
+            (rd / HANDED_FILE).write_text(json.dumps(dict(to=to, epochs=n_epochs(rd), at=stamp)), encoding="utf-8")
+            made.append(zp)
+    if stubs:
+        base = Path(work) if work else out
+        tmp = base / f"stubs_{stamp}.zip.partial"
+        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as z:
+            for root, v, k, s, rd in stubs:
+                if not (rd / INIT_FILE).exists() and (rd / "last.pt").exists():
+                    if work:                                   # đọc last.pt trên Drive qua bản chép có timeout
+                        lp = Path(work) / "last.pt"
+                        copy(rd / "last.pt", lp)
+                        h = init_hash(Path(work))
+                        lp.unlink()
+                    else:
+                        h = init_hash(rd)
+                    if h:
+                        (rd / INIT_FILE).write_text(json.dumps(dict(initial_detector_hash=h)), encoding="utf-8")
+                for f in STUB_KEEP:
+                    if (rd / f).exists():
+                        z.writestr(f"{root}/{v}/fold{k}/seed{s}/{f}", (rd / f).read_bytes())
+                z.writestr(f"{root}/{v}/fold{k}/seed{s}/{STUB_FILE}", json.dumps(dict(at=stamp)))
+        zp = dest / f"stubs_{stamp}.zip"
+        if work:
+            copy(tmp, zp)
+            tmp.unlink()
+        else:
+            os.replace(tmp, zp)
+        made.append(zp)
+    for n in notes:
+        say("  " + n)
+    say(f"Bàn giao: {len(made)} file trong {dest}")
+    for z in made:
+        say(f"  {Path(z).name}  ({Path(z).stat().st_size / 1e9:.2f} GB)")
+    return made
+
+
+def receive(src, out=OUT, splits=None, data=None, lock=LOCK, work=None, copy=_copy, busy_min=None):
+    """Nhận zip từ máy kia vào <out>: aug1_/refit1_ (run xong), partial_aug1_/partial_refit1_ (run dở), stubs_ (tóm tắt).
+    Bản nhận thay bản đang có chỉ khi nối tiếp nó; bản bị thay cất vào failed_runs/. Lệch nhánh, lệch khoá hoặc lệch
+    khởi tạo với run cùng cặp thì không nhập. Zip đã xử lý chuyển sang <src>/done|duplicate|rejected/."""
+    from refit import run as R
+    src, out = Path(src), Path(out)
+    busy_min = BUSY_MIN if busy_min is None else busy_min
+    work = Path(work or out / "_nhan_tmp")
+    refit_hash = R.write_manifests(Path(splits or Path(data) / "splits_v2"), data, out / "runs_refit1") if data else None
+    epochs = lock["common"]["epochs"]
+
+    def park(z, sub):
+        (src / sub).mkdir(parents=True, exist_ok=True)
+        shutil.move(str(z), str(src / sub / z.name))
+
+    def install(item, kind, v, k, s):
+        """Trả về (kết quả, lý do): installed | duplicate | rejected | busy | wait."""
+        target = out / KIND_DIR[kind] / v / f"fold{k}" / f"seed{s}"
+        try:
+            cfg = json.loads((item / "config.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return "rejected", "thiếu config.json"
+        if kind == "refit1":
+            if refit_hash is None:
+                return "rejected", "thiếu --data để kiểm manifest refit"
+            bad = config_problems(cfg, v, k, s, dict(lock, manifests={**lock["manifests"], k: refit_hash[k]}))
+        else:
+            bad = config_problems(cfg, v, k, s, lock)
+        if bad:
+            return "rejected", f"lệch khoá: {bad}"
+        stub = (item / STUB_FILE).exists()
+        if not stub and not (item / "last.pt").exists():
+            return "rejected", "thiếu last.pt"
+        if kind == "aug1" and is_done(item, epochs) and not stub:
+            bad = run_problems(item, v, k, s, lock)
+            if bad:
+                return "rejected", f"chưa đủ: {bad}"
+        if kind == "refit1" and (item / "refit.json").exists():
+            run_a = out / "runs_aug1" / v / f"fold{k}" / f"seed{s}"
+            if a_problems(run_a, v, k, s, lock):
+                return "wait", "chưa có run (a) tương ứng ở đây"
+            if json.loads((item / "refit.json").read_text(encoding="utf-8"))["E"] != R.selected_epoch(run_a):
+                return "rejected", "E khác epoch run (a) chọn"
+        write_init(item)
+        mine, partner = run_init(item), out / KIND_DIR[kind] / OTHER[v] / f"fold{k}" / f"seed{s}"
+        pi = run_init(partner) if (partner / "config.json").exists() else None
+        if mine and pi and mine != pi:
+            return "rejected", f"khởi tạo {mine[:12]}… khác run cùng cặp {pi[:12]}…"
+        rel = relation(target, item)
+        if rel in ("same", "behind"):
+            if rel == "same" and (target / HANDED_FILE).exists():
+                (target / HANDED_FILE).unlink()               # bản bàn giao quay về mà không train thêm
+            return "duplicate", ("trùng bản đang có" if rel == "same" else "bản đang có đã đi xa hơn")
+        if rel == "fork":
+            return "rejected", "LỆCH NHÁNH với bản đang có (hai nơi cùng train run này): gửi Claude, không tự chọn"
+        log_name = f"{'refit1_' if kind == 'refit1' else ''}{v}_fold{k}_seed{s}"
+        age = log_age(out, log_name)
+        if age is not None and age < busy_min:
+            return "busy", f"log vừa được ghi {age:.0f} phút trước (có thể đang train)"
+        if target.exists():
+            dest = out / "failed_runs" / f"{kind}_{v}_fold{k}_seed{s}_{time.strftime('%Y%m%d_%H%M%S')}_truoc_nhap"
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(target), str(dest))
+        (item / HANDED_FILE).unlink(missing_ok=True)
+        partial = target.with_name(target.name + ".partial")
+        shutil.rmtree(partial, ignore_errors=True)
+        copy(item, partial)
+        partial.rename(target)
+        return "installed", ("bản tóm tắt (run xong ở máy kia)" if stub else f"{n_epochs(target)} epoch")
+
+    results = {}
+    zips = sorted(src.glob("*.zip"), key=lambda z: (not z.name.startswith("stubs_"), "refit1" in z.name, z.name))
+    say(f"{len(zips)} zip chờ nhận trong {src}")
+    for z in zips:
+        tmp = work / z.stem
+        shutil.rmtree(tmp, ignore_errors=True)
+        tmp.mkdir(parents=True)
+        copy(z, tmp / "run.zip")
+        items = []
+        with zipfile.ZipFile(tmp / "run.zip") as f:
+            names = f.namelist()
+            if any(n.startswith("/") or ".." in n.split("/") or ":" in n for n in names):
+                say(f"  {z.name}: zip chứa đường dẫn lạ → KHÔNG nhập")
+                park(z, "rejected")
+                continue
+            m = ZIP_RE.fullmatch(z.stem)
+            if m:
+                prefix = f"{m[3]}/fold{m[4]}/seed{m[5]}/"
+                if any(not n.startswith(prefix) for n in names):
+                    say(f"  {z.name}: nội dung không khớp tên → KHÔNG nhập")
+                    park(z, "rejected")
+                    continue
+                f.extractall(tmp / "x")
+                items = [(m[2], m[3], int(m[4]), int(m[5]), tmp / "x" / m[3] / f"fold{m[4]}" / f"seed{m[5]}")]
+            elif z.stem.startswith("stubs_"):
+                f.extractall(tmp / "x")
+                for kind, root in KIND_DIR.items():
+                    for v, k, s in jobs():
+                        d = tmp / "x" / root / v / f"fold{k}" / f"seed{s}"
+                        if (d / STUB_FILE).exists():
+                            items.append((kind, v, k, s, d))
+            else:
+                say(f"  {z.name}: tên lạ, bỏ qua")
+                continue
+        outcome = []
+        for kind, v, k, s, d in items:
+            r, why = install(d, kind, v, k, s)
+            results[f"{kind}_{v}_fold{k}_seed{s}"] = r
+            outcome.append(r)
+            say(f"  {kind}_{v}_fold{k}_seed{s}: {dict(installed='ĐÃ NHẬP', duplicate='bỏ qua', rejected='KHÔNG NHẬP', busy='để lại', wait='để lại')[r]} — {why}")
+        shutil.rmtree(tmp, ignore_errors=True)
+        if "busy" in outcome or "wait" in outcome:
+            continue
+        park(z, "rejected" if "rejected" in outcome else "done" if "installed" in outcome else "duplicate")
+    shutil.rmtree(work, ignore_errors=True)
+    return results
+
+
 # ---------------------------------------------------------------- tiến độ (chỉ đọc, chạy song song với train được)
 SEC_DEFAULT = {"baseline": 170.0, "full": 190.0}   # giây/epoch đo trên 5090 ngày 23/11 (gồm val), khi chưa có số đo
 REFIT_SCALE = 1.2                                    # refit train trên 18 subject thay vì 15: ước lượng khi chưa đo
@@ -579,10 +955,16 @@ def _hist(rd):
         return []
 
 
-def _latest_log(out, name):
+def _latest_log(out, name, logs=None):
     pat = re.compile(r"\d{8}_\d{6}_" + re.escape(name) + r"\.log")
-    logs = [p for p in (Path(out) / "logs").glob(f"*{name}.log") if pat.fullmatch(p.name)]
-    return max(logs, key=lambda p: p.stat().st_mtime, default=None)
+    logs = logs if logs is not None else list((Path(out) / "logs").glob(f"*{name}.log"))
+    return max((p for p in logs if pat.fullmatch(p.name)), key=lambda p: p.stat().st_mtime, default=None)
+
+
+def log_age(out, name):
+    """Số phút từ lần cuối log của run này được ghi; None nếu chưa có log."""
+    log = _latest_log(out, name)
+    return None if log is None else (time.time() - log.stat().st_mtime) / 60
 
 
 def _in_epoch(log, done):
@@ -632,13 +1014,14 @@ def progress(out=OUT, lock=LOCK, now=None):
             except (KeyError, ValueError, TypeError):
                 pass
     e_guess = _mean(list(known_e.values()), 5.0)
+    logs = list((out / "logs").glob("*.log"))
     items = []
     for ph, prefix in (("a", ""), ("refit", "refit1_")):
         for v, k, s in jobs():
             total = n_ep if ph == "a" else known_e.get((v, k, s), e_guess)
             done = min(len(hist[ph, v, k, s]), total)
             name = f"{prefix}{v}_fold{k}_seed{s}"
-            log = _latest_log(out, name) if done < total else None
+            log = _latest_log(out, name, logs) if done < total else None
             live = log is not None and now - log.stat().st_mtime < LIVE_MIN * 60
             got = done + (_in_epoch(log, int(done)) if live else 0.0)
             items.append(dict(phase=ph, variant=v, fold=k, seed=s, total=total, done=got, sec=sec[ph, v],
@@ -650,6 +1033,13 @@ def progress(out=OUT, lock=LOCK, now=None):
         return dict(pct=100 * sum(i["done"] * i["sec"] for i in its) / full if full else 100.0,
                     runs_done=sum(i["finished"] for i in its), n=len(its), left=sum(i["left"] for i in its))
     live = [i for i in items if i["live"]]
+    if live:                       # tốc độ của máy đang chạy (run có thể đã chạy qua máy khác): theo 3 epoch gần nhất
+        c = live[0]
+        recent = [r.get("seconds") for r in hist[c["phase"], c["variant"], c["fold"], c["seed"]][-3:]]
+        factor = _mean(recent, c["sec"]) / c["sec"] if c["sec"] else 1.0
+        for i in items:
+            i["sec"] *= factor
+            i["left"] = (i["total"] - i["done"]) * i["sec"] + (RUN_OVERHEAD if not i["finished"] else 0.0)
     return dict(now=now, a=agg([i for i in items if i["phase"] == "a"]), refit=agg([i for i in items if i["phase"] == "refit"]),
                 total=agg(items), current=live[0] if live else None, known_e=len(known_e), e_guess=e_guess,
                 sec={f"{ph}/{v}": x for (ph, v), x in sec.items()}, epochs=n_ep)
@@ -740,33 +1130,50 @@ def main(argv=None):
         q.add_argument("--data", required=True)
     sub.choices["smoke"].add_argument("--keep", action="store_true")
     for name in ("train", "refit"):
-        sub.choices[name].add_argument("--seeds", type=int, nargs="+", required=True, choices=(0, 1, 2),
-                                       help="chỉ các seed giao cho máy này; Colab không được chạy trùng")
+        sub.choices[name].add_argument("--seeds", type=int, nargs="+", required=True, choices=(0, 1, 2))
         sub.choices[name].add_argument("--folds", type=int, nargs="+", default=[1, 2, 3], choices=(1, 2, 3))
         sub.choices[name].add_argument("--old-session-dead", action="store_true")
+        sub.choices[name].add_argument("--no-pack", action="store_true", help="không nén zip (Colab: run đã nằm trên Drive)")
+        sub.choices[name].add_argument("--reclaim", action="store_true",
+                                       help="train tiếp cả run đã bàn giao, khi chắc chắn máy kia chưa train tiếp")
     sub.add_parser("status")
     w = sub.add_parser("progress", help="%% hoàn thành và giờ xong dự kiến (chỉ đọc, chạy song song với train được)")
     w.add_argument("--watch", type=int, default=0, metavar="GIÂY", help="làm mới sau mỗi GIÂY giây; 0 = in một lần")
+    sd = sub.add_parser("send", help="bàn giao cho máy kia: zip run dở (partial_...) và run xong")
+    sd.add_argument("--dest", help="thư mục đặt zip (mặc định <out>/upload)")
+    sd.add_argument("--complete", choices=("zip", "stub"), default="zip")
+    sd.add_argument("--work", help="thư mục tạm trên ổ cục bộ (Colab)")
+    sd.add_argument("--old-session-dead", action="store_true", help="đã tự dừng train ở đây, không chờ 15 phút")
+    rv = sub.add_parser("receive", help="nhận zip từ máy kia (run dở, run xong, bản tóm tắt)")
+    rv.add_argument("--src", help="thư mục chứa zip nhận (mặc định <out>/nhan)")
+    rv.add_argument("--data", help="thư mục DATA (cần để kiểm manifest của refit)")
+    rv.add_argument("--work")
+    for q in sub.choices.values():
+        q.add_argument("--out", default=str(OUT), help="gốc kết quả (mặc định pc_runs; Colab: MyDrive/Sym)")
     a = ap.parse_args(argv)
+    out = Path(a.out)
     if a.cmd == "prepare":
         prepare(a.downloads, a.data)
     elif a.cmd == "from-folder":
         from_folder(a.src, a.data, a.lists)
     elif a.cmd == "check":
-        check(a.data)
+        check(a.data, out=out)
     elif a.cmd == "smoke":
-        check(a.data)
-        smoke(a.data, keep=a.keep)
-    elif a.cmd == "train":
-        check(a.data)
-        train(a.data, a.seeds, a.folds, old_session_dead=a.old_session_dead)
-    elif a.cmd == "refit":
-        check(a.data)
-        refit(a.data, a.seeds, a.folds, old_session_dead=a.old_session_dead)
+        check(a.data, out=out)
+        smoke(a.data, out=out, keep=a.keep)
+    elif a.cmd in ("train", "refit"):
+        got = check(a.data, out=out)
+        fn = train if a.cmd == "train" else refit
+        fn(a.data, a.seeds, a.folds, out=out, old_session_dead=a.old_session_dead, pack_zip=not a.no_pack,
+           reclaim=a.reclaim, machine=(got.get("gpu") or {}).get("name"))
     elif a.cmd == "progress":
-        watch(every=a.watch, once=a.watch <= 0)
+        watch(out=out, every=a.watch, once=a.watch <= 0)
+    elif a.cmd == "send":
+        send(out=out, dest=a.dest, complete=a.complete, work=a.work, old_session_dead=a.old_session_dead)
+    elif a.cmd == "receive":
+        receive(a.src or out / "nhan", out=out, data=a.data, work=a.work)
     else:
-        status()
+        status(out=out)
 
 
 if __name__ == "__main__":

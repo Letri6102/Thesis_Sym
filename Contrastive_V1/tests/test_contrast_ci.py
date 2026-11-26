@@ -214,17 +214,14 @@ def test_reads_real_train_and_evaluate_output(tmp_path):
 
 
 def test_lock_matches_code_and_cell_g():
-    """Đỏ nghĩa là file bị hash đã đổi: cấm push cho tới khi đủ 18 run (CLAUDE.md §6)."""
+    """Đỏ nghĩa là file bị hash đã đổi: cấm push cho tới khi đủ 18 run (CLAUDE.md §6).
+    Từ 26/11 Colab train bằng runner (cell G2) nên dùng chính LOCK này; cell G2 không có hằng số khoá riêng."""
     assert CI.source_digest(TC.source_files()) == CI.LOCK["source"]
     assert CI.LOCK["variant_settings"] == {v: TC.VARIANTS[v] for v in (CI.BASELINE, CI.CANDIDATE)}
-    nb = json.loads((REPO / "notebooks" / "Train_18_run.ipynb").read_text(encoding="utf-8"))
-    cell = next("".join(c["source"]) for c in nb["cells"] if "".join(c["source"]).startswith("# ==== Cell G"))
+    nb = json.loads((REPO / "notebooks" / "Train_Colab.ipynb").read_text(encoding="utf-8"))
+    cell = next("".join(c["source"]) for c in nb["cells"] if "".join(c["source"]).startswith("# ==== Cell G2"))
     assert cell in (REPO / "COLAB_CELLS.md").read_text(encoding="utf-8")
-    ns = {}
-    head = cell.split("LOCKED = ", 1)[1].split("MIN_FREE_GB", 1)[0]
-    exec("LOCKED = " + head, ns)
-    assert ns["LOCK_SRC"] == CI.LOCK["source"] and ns["LOCK_MANIFEST"] == CI.LOCK["manifests"]
-    assert ns["LOCK_ENV"] == CI.LOCK["env"] and all(CI.LOCK["common"][k] == v for k, v in ns["LOCKED"].items())
+    assert "train_18_run.py" in cell and "LOCK" not in cell and "'--no-pack'" in cell
 
 
 def test_report_notebook_hides_this_log(tmp_path, capsys):

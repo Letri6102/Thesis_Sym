@@ -59,6 +59,9 @@ pause
 exit /b 0
 
 :train
+if not exist "%ROOT%\nhan" mkdir "%ROOT%\nhan"
+echo === Nhan ban giao tu Colab: zip trong %ROOT%\nhan (khong co thi bo qua)
+"%VPY%" pc\train_18_run.py receive --data "%DATA%" --src "%ROOT%\nhan" || goto :fail
 echo === 5/5 Train seed %SEEDS%. Bi ngat thi chay lai file nay: run do se resume.
 echo Ngat UltraViewer khong sao, nhung KHONG dong cua so nay va KHONG sign out may.
 "%VPY%" pc\train_18_run.py train --data "%DATA%" --seeds %SEEDS% || goto :fail
@@ -67,7 +70,8 @@ echo === Refit (dong b): train lai tren du 18 subject, dung o epoch E cua run (a
 "%VPY%" pc\train_18_run.py status
 echo.
 echo XONG. Zip ket qua: %REPO%\pc_runs\upload
-echo Chep cac zip ve may ca nhan, keo vao MyDrive/Sym/upload/, roi chay notebook Nhap_run_PC tren Colab.
+echo Chep cac zip ve may ca nhan, keo vao MyDrive/Sym/upload/, roi chay cell I tren Colab (Train_Colab hoac Nhap_run_PC).
+echo Muon chuyen sang Colab giua chung: dong cua so nay roi chay pc\windows\ban_giao.bat.
 pause
 exit /b 0
 

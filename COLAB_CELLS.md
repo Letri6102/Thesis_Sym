@@ -646,123 +646,54 @@ files.download(f'/content/{name}')
 
 ---
 
-## G. Train 18 run với cấu hình đã KHOÁ — GPU, khoảng 40 giờ, chạy sau Setup
+## G2. Train trên Colab bằng runner chung với máy 5090 — GPU, chạy sau Setup (`IMAGES = True`)
 
-Có sẵn dạng notebook kèm Setup: [notebooks/Train_18_run.ipynb](notebooks/Train_18_run.ipynb).
-- **Kiểm khoá trước khi train:** hash code, 3 manifest, phiên bản thư viện, trọng số ImageNet, config của mọi run đã có.
-- **Chạy lại là tiếp tục:** run xong thì bỏ qua, run dở thì resume. Run bị ngắt trong epoch 1 được cất sang `failed_runs/` rồi train lại (cell B không xử lý được ca này).
-- **Chặn:** run vừa được ghi dưới 15 phút (có thể phiên khác đang train), Drive trống dưới 12 GB.
-- Không evaluate test.
-- **Không chạy nữa (23/11):** chủ dự án chuyển cả 18 run sang máy 5090 (`pc/README.md`), để mọi run cùng một máy. Run cell G đã làm nằm ở `runs_aug1_colab/` sau khi đổi tên (xem cell I), không thuộc 18 run.
+Chủ dự án đổi 26/11: Colab và máy 5090 **train xen kẽ**, bàn giao cả run dở. Có sẵn dạng notebook: [notebooks/Train_Colab.ipynb](notebooks/Train_Colab.ipynb) (Setup → I nhận từ 5090 → G2 train → M bàn giao cho 5090). Cell G cũ không dùng nữa.
+- Chạy `pc/train_18_run.py` với `--out MyDrive/Sym`: cùng khoá, cùng cách resume, cùng kiểm cặp như máy 5090. Run dở do máy 5090 train được resume ở đây.
+- **Quy tắc cặp:** run mới chỉ được tạo khi run cùng cặp (nếu đã có) có cùng hash khởi tạo với máy này (runner tính thử trước, khoảng 10 giây). Không khớp thì run đó để lại cho máy kia.
+- Run đã bàn giao (`HANDED_OFF.json`) không train tiếp, trừ khi `RECLAIM = True` (chỉ khi máy 5090 chưa train tiếp run đó).
+- Mỗi run khoảng 2,5 giờ trên L4. Phiên bị ngắt thì chạy lại cell: run dở resume. Log vừa được ghi dưới 15 phút thì runner dừng (có thể phiên khác đang train), trừ khi `OLD_SESSION_DEAD = True`.
 
 ```python
-# ==== Cell G: cấu hình KHOÁ 22/11 — train cho đủ 18 run trong runs_aug1 (2 pilot đã xong + 16). KHÔNG đụng test ====
-import hashlib
-SEEDS = [0, 1, 2]              # chạy song song: mỗi phiên một nhóm seed KHÔNG trùng nhau
-OLD_SESSION_DEAD = False       # chỉ đặt True khi đã tự kiểm phiên cũ tắt hẳn (Runtime → Manage sessions)
-
-# ---- Không sửa từ đây: đổi bất kỳ giá trị nào là phá khoá
-VARIANTS, FOLDS = ['baseline', 'full'], [1, 2, 3]
-EPOCHS, BATCH, WORKERS = 20, 32, 4
-LOCKED = dict(arc='resnet50', epochs=20, batch_size=32, workers=4, lr=1e-4, weight_decay=5e-4, temperature=0.1,
-              pretrained=True, ema_decay=0.0, val_per_epoch=1, backbone_lr_mult=1.0)
-LOCK_SRC = '94fcd27ef11c40cd30052f8d3dfeb8fb01b178b29655c24a4e8f46dc1604670e'
-LOCK_MANIFEST = {1: '00670123caf67f0661a0fc8cdafabadfc6965a488f987591c25e3a341dd04ba2',
-                 2: '19bd03dafc852f0e259cdff52ca666a62b3de16dd209d32a4ea2e7416b637cf2',
-                 3: '248bb62b6357642f8cf3b6011eb1c37d5cf301e0377220abab47c78889e673d7'}
-LOCK_ENV = {'torch': '2.14.1+cu130', 'torchvision': '0.29.1+cu130', 'numpy': '2.4.6', 'timm': '1.0.22', 'pillow': '11.3.0'}
-LOCK_WEIGHT = '19c8e357'       # đầu SHA-256 của trọng số ImageNet
-MIN_FREE_GB, BUSY_MIN = 12, 15
-
-def src_digest(src):
-    return hashlib.sha256(json.dumps(src, sort_keys=True).encode()).hexdigest()
-
-def run_dir(v, k, s):
-    return RUNS / v / f'fold{k}' / f'seed{s}'
-
-def n_epochs(out):
-    try:
-        return len(json.loads((out / 'history.json').read_text()))
-    except (OSError, ValueError):              # chưa có, hoặc bị ngắt lúc đang ghi
-        return 0
-
-def is_done(out):
-    return n_epochs(out) >= EPOCHS and all((out / n).exists() for n in ('config.json', 'best.pt', 'last.pt'))
-
-def check_config(v, k, s):
-    cfg = json.loads((run_dir(v, k, s) / 'config.json').read_text())
-    want = dict(LOCKED, variant=v, fold=k, seed=s, manifest_hash=LOCK_MANIFEST[k], environment_versions=LOCK_ENV)
-    bad = [key for key, val in want.items() if cfg.get(key) != val]
-    if src_digest(cfg.get('source_hashes', {})) != LOCK_SRC:
-        bad.append('source_hashes')
-    assert not bad, f'{v}/fold{k}/seed{s} lệch cấu hình khoá ở {bad}: dừng, gửi Claude xem'
-
-# 1) Kiểm khoá trước khi train bất cứ gì
-assert torch.cuda.is_available(), 'Cần runtime GPU'
+# ==== Cell G2: train bộ 18 run trên Colab bằng đúng runner của máy 5090 (26/11). Drive là bản chính. KHÔNG đụng test ====
 assert str(DATA).startswith('/content/'), 'Ảnh chưa nằm trong /content: chạy Setup với IMAGES = True'
-assert RUNS.name == 'runs_aug1', f'RUNS phải là runs_aug1, đang là {RUNS}'
-probe = ('import sys, json, importlib.metadata as M\n'
-         'from train_contrastive import source_files\n'
-         'from experiment_data import load_manifest\n'
-         'for k in (1, 2, 3): load_manifest(f"{sys.argv[1]}/fold{k}.json", sys.argv[2])\n'
-         'env = {k: M.version(k) for k in ("torch", "torchvision", "numpy", "timm", "pillow")}\n'
-         'print("LOCK" + json.dumps(dict(src=source_files(), env=env)))')
-r = subprocess.run([sys.executable, '-c', probe, str(SPLITS), str(DATA)], cwd=CODE, capture_output=True, text=True)
-assert r.returncode == 0, 'Kiểm code/manifest lỗi:\n' + r.stderr[-2000:]
-now = json.loads(next(x for x in r.stdout.splitlines() if x.startswith('LOCK'))[4:])
-assert src_digest(now['src']) == LOCK_SRC, 'Code bị hash KHÁC bản đã khoá: dừng, gửi Claude xem'
-assert now['env'] == LOCK_ENV, (
-    f"Phiên bản thư viện khác bản khoá: {now['env']}\nChạy 2 dòng sau ở một cell riêng rồi chạy lại cell G:\n"
-    f"!pip install -q torch=={LOCK_ENV['torch']} torchvision=={LOCK_ENV['torchvision']} --index-url https://download.pytorch.org/whl/cu130\n"
-    f"!pip install -q numpy=={LOCK_ENV['numpy']} timm=={LOCK_ENV['timm']} pillow=={LOCK_ENV['pillow']}")
-for k in FOLDS:
-    assert hashlib.sha256((SPLITS / f'fold{k}.json').read_bytes()).hexdigest() == LOCK_MANIFEST[k], f'splits_v2/fold{k}.json đã đổi'
-weight = CODE / 'checkpoints' / 'resnet50-19c8e357.pth'
-assert weight.exists() and hashlib.sha256(weight.read_bytes()).hexdigest().startswith(LOCK_WEIGHT), 'Thiếu hoặc sai trọng số ImageNet'
-for v in VARIANTS:
-    assert is_done(run_dir(v, 2, 0)), f'Không thấy pilot {v}/fold2/seed0 đủ 20 epoch: đợi Drive đồng bộ, đừng train lại'
+shutil.copytree(SPLITS, DATA / 'splits_v2', dirs_exist_ok=True)       # runner đọc manifest ở <DATA>/splits_v2 (có kiểm hash khoá)
+SEEDS, FOLDS = [0, 1, 2], [1, 2, 3]
+REFIT = True                     # xong (a) thì refit luôn những run (a) đã xong
+OLD_SESSION_DEAD = False         # chỉ đặt True khi chắc chắn phiên Colab trước đã tắt hẳn
+RECLAIM = False                  # chỉ đặt True khi lấy lại run đã bàn giao mà máy 5090 CHƯA train tiếp
+args = ['--data', DATA, '--out', SYM, '--seeds', *SEEDS, '--folds', *FOLDS, '--no-pack']
+args += ['--old-session-dead'] * OLD_SESSION_DEAD + ['--reclaim'] * RECLAIM
+runner = [sys.executable, '-u', REPO / 'pc' / 'train_18_run.py']
+run_logged(runner + ['train', *args], 'colab_train')
+if REFIT:
+    run_logged(runner + ['refit', *args], 'colab_refit')
+run_logged(runner + ['progress', '--out', SYM], 'colab_progress')
+```
 
-ALL = [(v, k, s) for s in (0, 1, 2) for k in FOLDS for v in VARIANTS]     # baseline và full cùng fold/seed chạy liền nhau
-for job in ALL:
-    if (run_dir(*job) / 'config.json').exists():
-        check_config(*job)
-todo = [j for j in ALL if j[2] in SEEDS and not is_done(run_dir(*j))]
-print(f'Khoá OK | xong {sum(is_done(run_dir(*j)) for j in ALL)}/18 | phiên này còn {len(todo)} run, khoảng {2.5 * len(todo):.0f} giờ L4', flush=True)
+## M. Bàn giao cho máy 5090 — CPU hoặc GPU, chạy sau Setup
 
-# 2) Hàng đợi: chạy lại cell là tiếp tục
-for i, (v, k, s) in enumerate(todo, 1):
-    out, name = run_dir(v, k, s), f'{v}_fold{k}_seed{s}'
-    free = shutil.disk_usage('/content/drive').free / 1e9
-    print(f'\n[{i}/{len(todo)}] {name} | Drive trống {free:.0f} GB', flush=True)
-    assert free >= MIN_FREE_GB, (f'Drive còn {free:.0f} GB, cần {MIN_FREE_GB} GB. Xem Thùng rác trên drive.google.com '
-                                 '(bản cũ của last.pt/best.pt có thể nằm ở đó), kiểm kỹ trước khi xoá vĩnh viễn, rồi chạy lại cell')
-    seen = [out / n for n in ('config.json', 'history.json', 'last.pt', 'best.pt') if (out / n).exists()]
-    if seen and not OLD_SESSION_DEAD:
-        age = (time.time() - max(p.stat().st_mtime for p in seen)) / 60
-        assert age >= BUSY_MIN, (f'{name} vừa được ghi {age:.0f} phút trước, có thể phiên khác còn đang train. '
-                                 f'Đợi đủ {BUSY_MIN} phút, hoặc tắt hẳn phiên cũ rồi đặt OLD_SESSION_DEAD = True')
-    cmd = [sys.executable, '-u', 'train_contrastive.py', 'train', '--variant', v, '--seed', s,
-           '--arc', 'resnet50', '--data-root', DATA, '--manifest', SPLITS / f'fold{k}.json',
-           '--output', out, '--epochs', EPOCHS, '--batch-size', BATCH, '--workers', WORKERS]
-    if (out / 'last.pt').exists():
-        cmd += ['--resume', out / 'last.pt']
-    elif (out / 'config.json').exists():       # bị ngắt trong epoch 1: chưa có gì để resume
-        assert not (out / 'history.json').exists(), f'{name} có history mà chưa thấy last.pt: đợi Drive đồng bộ rồi chạy lại'
-        dest = SYM / 'failed_runs' / f'aug1_{name}_{time.strftime("%Y%m%d_%H%M%S")}'
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(out), str(dest))
-        print(f'  lần trước bị ngắt trong epoch 1 → cất sang failed_runs/{dest.name}, train lại', flush=True)
-    run_logged(cmd, f'train_aug1_{name}')
-    if n_epochs(out) < EPOCHS and (out / 'last.pt').exists():    # bị ngắt giữa ghi last.pt và history.json ở epoch cuối
-        h = torch.load(out / 'last.pt', map_location='cpu', weights_only=False)['history']
-        (out / 'history.json').write_text(json.dumps(h, indent=2))
-    assert is_done(out), f'{name} chưa đủ 20 epoch hoặc thiếu checkpoint'
-    check_config(v, k, s)
+Dừng cell G2 trước. Cell nén vào `MyDrive/Sym/handoff/`:
+- `partial_aug1_*.zip` / `partial_refit1_*.zip`: run dở, đủ file để máy 5090 train tiếp (khoảng 0,7 GB mỗi file, dưới giới hạn 1 GB của UltraViewer). Run này được đánh dấu `HANDED_OFF` trên Drive.
+- `stubs_*.zip`: bản tóm tắt của run đã xong (config, history, init, không có trọng số), để máy 5090 bỏ qua chúng và biết E khi refit.
 
-n_done = sum(is_done(run_dir(*j)) for j in ALL)
-print(f'\nXONG phần của phiên này | tổng {n_done}/18 run.'
-      + (' Đủ 18: gửi báo cáo cho Claude, CHƯA mở test.' if n_done == 18 else ''), flush=True)
-print('Đang chờ Drive đồng bộ...', flush=True)
+Tải các file đó về máy cá nhân, chép vào `D:\LVTS_TriLe\nhan` trên máy 5090, rồi chạy `train_data_co_san.bat` (tự nhận trước khi train).
+
+```python
+# ==== Cell M: bàn giao cho máy 5090 — zip run dở (partial_...) + bản tóm tắt run đã xong (stubs_...) vào MyDrive/Sym/handoff ====
+# Dừng cell G2 trước. Run dở được đánh dấu HANDED_OFF trên Drive: Colab không train tiếp cho tới khi nhận bản mới về (cell I).
+STOPPED_HERE = False             # True: vừa tự dừng cell G2 trong phiên này, không cần chờ 15 phút
+sys.path.insert(0, str(REPO / 'pc'))
+from stage2_decoder.contrast_ci import LOCK
+import train_18_run as PC
+OUT_DIR = SYM / 'handoff'
+for old in OUT_DIR.glob('*.zip'):                         # bản bàn giao cũ chưa dùng: cất đi, tránh nhận nhầm
+    (OUT_DIR / 'cu').mkdir(parents=True, exist_ok=True)
+    shutil.move(str(old), str(OUT_DIR / 'cu' / old.name))
+PC.send(out=SYM, dest=OUT_DIR, complete='stub', lock=LOCK, work=Path('/content/handoff_work'),
+        old_session_dead=STOPPED_HERE, to='máy 5090')
+print('Tải các file trên trong MyDrive/Sym/handoff về máy cá nhân, chép vào D:\\LVTS_TriLe\\nhan trên máy 5090,'
+      ' rồi chạy train_data_co_san.bat (tự nhận trước khi train).', flush=True)
 drive.flush_and_unmount()
 ```
 
@@ -780,95 +711,24 @@ run_logged([sys.executable, '-u', '-m', 'stage2_decoder.contrast_ci', '--runs', 
 
 ---
 
-## I. Nhập run train trên máy GPU riêng — CPU, chạy sau Setup (`IMAGES = False`)
+## I. Nhận run từ máy 5090 — CPU, chạy sau Setup (`IMAGES = False` là đủ)
 
-Có sẵn dạng notebook kèm Setup: [notebooks/Nhap_run_PC.ipynb](notebooks/Nhap_run_PC.ipynb). Máy riêng chạy `pc/train_18_run.py` và tạo `aug1_<variant>_fold<k>_seed<s>.zip` (run (a)) và `refit1_…zip` (dòng (b)); tải các zip này lên `MyDrive/Sym/upload/`. Zip refit chỉ được nhập khi run (a) tương ứng đã có trên Drive và E trùng epoch nó chọn.
-- Kiểm khoá từng run (config, hash code, thư viện, manifest, đủ 20 epoch, có `best.pt` và `last.pt`), rồi chép vào `runs_aug1/`.
-- **Không ghi đè** run đã đủ 20 epoch trên Drive. Không đụng run vừa được ghi dưới 15 phút (Colab có thể đang train).
-- **Không trộn máy (23/11):** cả 18 run (a) và refit đều train trên máy 5090. Zip train trên GPU khác GPU của run đã có trong `runs_aug1`/`runs_refit1` bị để lại trong `upload/`. **Trước lần nhập đầu tiên:** dừng cell G và K, đổi tên `MyDrive/Sym/runs_aug1` thành `runs_aug1_colab` (cả pilot L4 ở trong đó), và `runs_refit1` thành `runs_refit1_colab` nếu đã có. Đổi tên trong giao diện Drive là đủ; không xoá.
-- Zip đã xử lý được chuyển sang `upload/done/`, `upload/duplicate/` hoặc `upload/rejected/`. Chạy lại cell là xử lý tiếp phần còn lại.
+Có sẵn dạng notebook kèm Setup: [notebooks/Nhap_run_PC.ipynb](notebooks/Nhap_run_PC.ipynb); cũng nằm trong `Train_Colab.ipynb` và `Tong_hop_val.ipynb`. Logic ở `PC.receive` (`pc/train_18_run.py`), chung với lệnh `receive` của máy 5090.
+- Nhận `aug1_*` / `refit1_*` (run xong), `partial_aug1_*` / `partial_refit1_*` (run dở, 26/11) trong `MyDrive/Sym/upload/`.
+- Kiểm khoá (config, hash code, thư viện, manifest). Bản nhận **chỉ thay** bản trên Drive khi nó là phần nối tiếp: lịch sử epoch của bản trên Drive là phần đầu của bản nhận. Bản bị thay được cất vào `failed_runs/…_truoc_nhap`, không xoá.
+- **Không nhập:** bản lệch nhánh (hai nơi cùng train một run), bản có hash khởi tạo khác run cùng cặp, bản lệch khoá. Run mà log vừa được ghi dưới 15 phút (Colab đang train) thì để lại, chạy lại sau. Refit chỉ nhập khi run (a) tương ứng đã có và E trùng.
+- Zip đã xử lý chuyển sang `upload/done/`, `upload/duplicate/` hoặc `upload/rejected/`. Chạy lại cell là xử lý tiếp phần còn lại.
+- **Không còn chặn trộn máy** (chủ dự án đổi 26/11): run từ L4 và 5090 cùng nằm trong `runs_aug1`; máy train từng epoch ghi ở `machines.json` của run.
 
 ```python
-# ==== Cell I: nhập run train trên máy GPU riêng (MyDrive/Sym/upload/*.zip) — kiểm khoá, không ghi đè ====
-import re, zipfile
-sys.path.insert(0, str(CODE))
-from stage2_decoder.contrast_ci import LOCK, config_problems, run_problems
-from refit import run as R
-
-UP, BUSY_MIN = SYM / 'upload', 15
-REFIT = SYM / 'runs_refit1'
-assert RUNS.name == 'runs_aug1', f'RUNS phải là runs_aug1, đang là {RUNS}'
-REFIT_HASH = R.write_manifests(SPLITS, DATA, REFIT)      # manifest refit chuẩn, tính lại từ splits_v2 đã khoá
-
-def ok_aug1(run, v, k, s):
-    return not run_problems(run, v, k, s, LOCK) and (run / 'last.pt').exists()
-
-def ok_refit1(run, v, k, s):
-    try:
-        rec, cfg = (json.loads((run / n).read_text()) for n in ('refit.json', 'config.json'))
-    except (OSError, ValueError):
-        return False
-    a = RUNS / v / f'fold{k}' / f'seed{s}'
-    lock = dict(LOCK, manifests={**LOCK['manifests'], k: REFIT_HASH[k]})
-    return (rec['manifest_hash'] == REFIT_HASH[k] and R.n_epochs(run) == rec['E'] and (run / 'last.pt').exists()
-            and not config_problems(cfg, v, k, s, lock) and ok_aug1(a, v, k, s) and R.selected_epoch(a) == rec['E'])
-
-KINDS = {'aug1': (RUNS, ok_aug1), 'refit1': (REFIT, ok_refit1)}
-
-def park(z, sub):
-    (UP / sub).mkdir(parents=True, exist_ok=True)
-    shutil.move(str(z), str(UP / sub / z.name))
-
-zips = sorted(UP.glob('*.zip'))                           # aug1_* đứng trước refit1_*: refit cần run (a) đã có
-print(f'{len(zips)} zip chờ nhập trong {UP}', flush=True)
-for z in zips:
-    m = re.fullmatch(r'(aug1|refit1)_(baseline|full)_fold([123])_seed([012])', z.stem)
-    if not m:
-        print(f'  {z.name}: tên lạ, bỏ qua'); continue
-    kind, v, k, s = m[1], m[2], int(m[3]), int(m[4])
-    base, ok = KINDS[kind]
-    target, prefix = base / v / f'fold{k}' / f'seed{s}', f'{v}/fold{k}/seed{s}/'
-    work = Path('/content/pc_import') / z.stem
-    shutil.rmtree(work, ignore_errors=True)
-    work.mkdir(parents=True)
-    subprocess.run(['cp', str(z), str(work / 'run.zip')], check=True, timeout=1800)     # đọc Drive có timeout
-    with zipfile.ZipFile(work / 'run.zip') as f:
-        if any(not n.startswith(prefix) or '..' in n.split('/') for n in f.namelist()):
-            print(f'  {z.name}: zip chứa đường dẫn lạ → KHÔNG nhập'); park(z, 'rejected'); continue
-        f.extractall(work / 'x')
-    run = work / 'x' / v / f'fold{k}' / f'seed{s}'
-    if not ok(run, v, k, s):
-        print(f'  {z.name}: lệch khoá, chưa xong, hoặc thiếu run (a) tương ứng → KHÔNG nhập'); park(z, 'rejected'); continue
-    gpu = json.loads((run / 'environment.json').read_text()).get('gpu')
-    mixed = sorted({json.loads(p.read_text()).get('gpu') or '?' for b in (RUNS, REFIT)
-                    for p in b.glob('*/fold*/seed*/environment.json') if p.parent != target} - {gpu})
-    if mixed:                                             # 23/11: cả 18 run (a) + refit phải train trên cùng một máy
-        print(f'  {z.name}: train trên {gpu}, nhưng Drive đã có run train trên {mixed} → để lại. '
-              f'Dừng cell G/K, đổi tên {RUNS.name} và {REFIT.name} cũ thành *_colab, rồi chạy lại cell'); continue
-    if (target / 'config.json').exists():
-        if ok(target, v, k, s):
-            print(f'  {z.name}: Drive đã có run này hoàn chỉnh → giữ bản Drive, không ghi đè'); park(z, 'duplicate'); continue
-        files = [p for p in target.rglob('*') if p.is_file()]
-        age = (time.time() - max(p.stat().st_mtime for p in files)) / 60 if files else 1e9
-        if age < BUSY_MIN:
-            print(f'  {z.name}: run này vừa được ghi {age:.0f} phút trước (Colab có thể đang train) → để lại, chạy lại cell sau'); continue
-        dest = SYM / 'failed_runs' / f'{kind}_{v}_fold{k}_seed{s}_{time.strftime("%Y%m%d_%H%M%S")}_truoc_nhap'
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(target), str(dest))
-        print(f'  bản dở trên Drive → failed_runs/{dest.name}')
-    partial = target.with_name(target.name + '.partial')
-    shutil.rmtree(partial, ignore_errors=True)
-    partial.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run(['cp', '-r', str(run), str(partial)], check=True, timeout=3600)
-    partial.rename(target)
-    assert ok(target, v, k, s), f'{z.name}: sau khi chép lên Drive lại lệch, gửi Claude xem'
-    park(z, 'done')
-    shutil.rmtree(work)
-    print(f'  {z.name}: ĐÃ NHẬP (GPU {gpu})', flush=True)
-
-for kind, (base, ok) in KINDS.items():
-    n = sum(ok(base / v / f'fold{k}' / f'seed{s}', v, k, s) for v in ('baseline', 'full') for k in (1, 2, 3) for s in (0, 1, 2))
-    print(f'{base.name}: {n}/18 run hoàn chỉnh đúng khoá')
+# ==== Cell I: nhận run từ máy 5090 (MyDrive/Sym/upload/*.zip): run xong và run dở — kiểm khoá, dòng lịch sử, cặp ====
+sys.path.insert(0, str(REPO / 'pc'))
+from stage2_decoder.contrast_ci import LOCK
+import train_18_run as PC
+PC.receive(SYM / 'upload', out=SYM, splits=SPLITS, data=DATA, lock=LOCK, work=Path('/content/pc_import'))
+for kind, root in PC.KIND_DIR.items():
+    n = sum(PC._done(kind, SYM / root / v / f'fold{k}' / f'seed{s}', LOCK['common']['epochs']) for v, k, s in PC.jobs())
+    print(f'{root}: {n}/18 run xong', flush=True)
 print('Đang chờ Drive đồng bộ...', flush=True)
 drive.flush_and_unmount()
 ```
@@ -989,7 +849,7 @@ Có sẵn dạng notebook một file: [notebooks/Tong_hop_val.ipynb](notebooks/T
 - Với mỗi run đủ 20 epoch: `evaluate --split val` bằng `best.pt` (bỏ qua nếu đã có), rồi Tầng 2 chỉ val (C0, C1, R0, R1, R_FACS). Run chưa có thì bỏ qua, nên chạy lại cell khi có thêm run.
 - Bảng in ra và ghi vào `MyDrive/Sym/stage2_v2/val_overview.json` gồm: từng run, trung bình theo variant, `R0 − C0`, `full − baseline` theo cặp cùng fold và seed, F1 từng AU.
 - λ và ngưỡng C1 được chọn trên chính val, nên các số này chỉ để xem chiều hướng: **không báo cáo, không so với 63.0**.
-- Chặn khi `runs_aug1` có run từ hai máy (chưa đổi tên thư mục Colab cũ thành `runs_aug1_colab`).
+- Run từ L4 và 5090 được trộn (26/11); bảng in GPU của các run.
 - Mỗi run mất khoảng 2–3 phút (evaluate val) cộng 30 giây (Tầng 2).
 
 ```python
@@ -998,9 +858,6 @@ if not os.path.isdir('/content/drive/MyDrive'):            # cell I tháo Drive 
     drive.mount('/content/drive')
 assert str(DATA).startswith('/content/'), 'evaluate val cần ảnh trong /content: chạy Setup với IMAGES = True'
 assert RUNS.name == 'runs_aug1', f'RUNS phải là runs_aug1, đang là {RUNS}'
-gpus = {json.loads(p.read_text()).get('gpu') or '?' for p in RUNS.glob('*/fold*/seed*/environment.json')}
-assert len(gpus) <= 1, (f'runs_aug1 có run từ nhiều máy {sorted(gpus)}: đổi tên runs_aug1 cũ (Colab) thành '
-                        'runs_aug1_colab, rồi nhập lại zip của máy 5090 bằng cell I')
 STAGE2 = SYM / 'stage2_v2'
 run_logged([sys.executable, '-u', '-m', 'stage2_decoder.run_all', '--runs', RUNS, '--splits', SPLITS,
             '--data-root', DATA, '--output', STAGE2, '--variants', 'baseline', 'full',

@@ -14,6 +14,7 @@ Mỗi backbone phải so với số của chính backbone đó.
 - **Không train, evaluate hay chạy Tầng 2 ở máy local.** Mọi thứ đụng tới dataset hoặc GPU đều chạy trên **Google Colab** qua notebook.
   - **Ngoại lệ (chủ dự án mở 23/11):** được **train** run của bộ 18 run trên máy GPU riêng (RTX 5090, remote), chỉ bằng `pc/train_18_run.py` (hướng dẫn `pc/README.md`), cùng khoá. Kết quả nhập vào Drive bằng cell I. Evaluate, Tầng 2 và mở test vẫn chỉ trên Colab. Máy dev hiện tại (RTX 5060 Ti) không phải máy train.
   - Máy 5090 chỉ được dùng thư mục `D:\LVTS_TriLe`, truy cập qua UltraViewer, không đăng nhập Drive. Gói chép sang dựng bằng `pc/make_bundle.py`, ảnh lấy từ `img/` ở máy cá nhân. **Chỉ train khi cell J báo `KHỚP 27/27`** (SHA-256 tar so với `DISFA_img` trên Drive; số ghi ở `pc/bundle_tar_sha256.json`).
+  - **Xen kẽ Colab ↔ 5090 (chủ dự án đổi 26/11):** Colab cũng train bộ 18 run, bằng chính `pc/train_18_run.py` (cell G2, `notebooks/Train_Colab.ipynb`, `--out MyDrive/Sym`). Hai nơi bàn giao cho nhau cả run dở: Colab → 5090 bằng cell M (`MyDrive/Sym/handoff/` → `D:\LVTS_TriLe\nhan`, file bat tự nhận trước khi train); 5090 → Colab bằng `pc/windows/ban_giao.bat` (`pc_runs\upload` → `MyDrive/Sym/upload/`, cell I). Quy tắc ở §6.
   - **Không sửa file `.bat` đang chạy trên máy remote** (ví dụ `train_data_co_san.bat` khi đang train): cmd đọc `.bat` từng đoạn trong lúc chạy, nên `git pull` đổi file đó giữa chừng làm cửa sổ chạy sai lệnh. Thêm file mới hoặc sửa `.py` thì pull được; tiến trình Python đang chạy không đổi, bước sau mới dùng code mới.
   - Cách đang dùng (23/11): máy 5090 có sẵn dữ liệu ở `D:\KLTN_Khang\DISFA_Data` (thư mục của người khác, **chỉ đọc**). `pc/windows/train_data_co_san.bat` → `from-folder`: kiểm list (`pc/data_reference.json`), tạo lại `splits_v2` (trùng byte), chép ảnh vào `D:\LVTS_TriLe\DISFA` và kiểm SHA-256 từng subject; lệch là dừng.
 - **Mọi code đều phải commit và push lên GitHub** (`Letri6102/Thesis_Sym`, nhánh `main`). Notebook Colab lấy code từ git, **không** đọc code từ Drive.
@@ -82,8 +83,8 @@ Contrastive_V1/remote_stage2/ script cho máy remote (runs_retry1, splits cũ) �
 MultiviewSymAU-master/       bản cài đặt lại SymGraphAU (Stage 2/3 cũ) để đối chiếu
 Tang2_Decoder.ipynb          Tầng 2 bản notebook 13/11 — LỖI THỜI, lệch đề cương; dùng stage2_decoder
 De_cuong_nghien_cuu.md       đề cương bản 2
-notebooks/                   Tong_hop_val.ipynb (Setup + cell I + cell L: tổng hợp chỉ val), Nhap_run_PC.ipynb (Setup + cell I), Bao_cao_log.ipynb (cell F) — bản đang dùng; Train_18_run.ipynb (cell G, K) không chạy nữa
-pc/                          train trên máy GPU riêng: setup_env.py, train_18_run.py (prepare/from-folder/check/smoke/train/refit/status/progress), make_bundle.py + windows/*.bat (train_data_co_san.bat = train; theo_doi.bat = % và giờ xong dự kiến), README.md
+notebooks/                   Train_Colab.ipynb (Setup + I nhận + G2 train + M bàn giao), Tong_hop_val.ipynb (Setup + I + L: tổng hợp chỉ val), Nhap_run_PC.ipynb (Setup + I), Bao_cao_log.ipynb (cell F) — bản đang dùng; Train_18_run.ipynb (cell G, K) không dùng nữa
+pc/                          runner chung cho máy 5090 và Colab: setup_env.py, train_18_run.py (prepare/from-folder/check/smoke/train/refit/status/progress/send/receive), make_bundle.py + windows/*.bat (train_data_co_san.bat = nhận + train + refit; ban_giao.bat = bàn giao cho Colab; theo_doi.bat = % và giờ xong dự kiến), README.md
 CONTEXT.md                   baseline SymGraphAU (paper), số cần vượt, đối chiếu pipeline, hướng cải tiến
 ```
 
@@ -115,9 +116,15 @@ Quy tắc cho mọi cell:
   - ResNet-50, aug mạnh, lr 1e-4, wd 5e-4, 20 epoch, batch 32, workers 4; không EMA, val 1 lần/epoch, LR backbone ×1.
   - Chỉ `baseline` và `full`; 3 fold × seed 0/1/2 = 18 run, train bằng `pc/train_18_run.py` trên máy 5090 (từ 23/11; trước đó cell G). Cả hai tự kiểm khoá code, manifest, thư viện.
   - **Không sửa hay push file bị hash, không tune, không thêm variant cho tới khi đủ 18 run.**
-  - **Phân công (chủ dự án đổi 23/11): máy RTX 5090 train cả 18 run (a) và 18 run refit** (`pc/windows/train_data_co_san.bat`, `SEEDS=0 1 2`). Colab không train Tầng 1 nữa (cell G, K dừng); run Colab đã làm (gồm 2 run pilot) chuyển sang `runs_aug1_colab/`, không thuộc 18 run. Cell I không nhập zip train trên GPU khác GPU của run đã có trên Drive.
-  - Hash khởi tạo trên máy 5090 (smoke 23/11: `a0b67247…`) khác pilot Colab (`a6121dc9…`) dù trọng số (`19c8e357`), code và thư viện trùng khoá: head khởi tạo ngẫu nhiên trên CPU lệch bit theo CPU/hệ điều hành. Vì vậy smoke và `train` kiểm cặp baseline = full **trên cùng máy**, không so với Colab.
-  - Phải công bố trong luận văn: cả 18 run (a) và refit train trên RTX 5090 (Windows); pilot dùng để khoá cấu hình train trên L4 (Colab) và có khởi tạo khác; pilot trượt tiêu chí "đỉnh sau epoch 2"; việc khoá diễn ra sau khi đã nhìn val fold 2 (chứa subject test của fold 1/3); aug được chọn 13/11, sau lần mở test thăm dò 29/10.
+  - **Phân công (chủ dự án đổi 26/11, thay quyết định 23/11 "cả 18 run trên một máy"): Colab (L4) và máy 5090 train xen kẽ, bàn giao cả run dở.**
+    - Drive (`MyDrive/Sym/runs_aug1`, `runs_refit1`) là bản chính. Mỗi lúc chỉ một nơi train một run: nơi gửi đánh dấu `HANDED_OFF.json` và không train tiếp run đó (trừ `--reclaim`, khi chắc chắn nơi kia chưa train tiếp).
+    - Bản nhận chỉ thay bản đang có khi là phần nối tiếp (lịch sử epoch cũ là phần đầu của lịch sử mới, cùng hash khởi tạo). Lệch nhánh thì không tự chọn: zip vào `rejected/`, gửi Claude. Bản bị thay cất vào `failed_runs/`.
+    - **Quy tắc cặp:** run mới chỉ được tạo khi run cùng cặp (nếu đã có) có cùng hash khởi tạo với máy đang chạy; runner tính thử hash của máy trước khi tạo. Run dở thì resume được ở bất kỳ máy nào cùng khoá (khoá không chứa đường dẫn hay GPU).
+    - Run xong ở máy kia nằm ở máy 5090 dưới dạng bản tóm tắt `DONE_ELSEWHERE.json` (không có trọng số): đủ để bỏ qua và để refit biết E.
+    - Máy train từng đoạn epoch ghi ở `machines.json` trong run; người tạo run ghi ở `environment.json`.
+    - Run Colab làm trước 23/11 (gồm 2 run pilot) vẫn ở `runs_aug1_colab/`, không thuộc 18 run. Cặp fold 1–2 seed 0 của 5090 là bản chính thức.
+  - Hash khởi tạo trên máy 5090 (smoke 23/11: `a0b67247…`) khác pilot Colab (`a6121dc9…`) dù trọng số (`19c8e357`), code và thư viện trùng khoá: head khởi tạo ngẫu nhiên trên CPU lệch bit theo CPU/hệ điều hành. Vì vậy smoke và `train` kiểm cặp baseline = full **trên cùng máy**, không so với Colab; từ 26/11 thêm quy tắc cặp ở trên.
+  - Phải công bố trong luận văn: run (a) và refit train trên RTX 5090 (Windows) và L4 (Colab), có run chạy qua cả hai máy (theo `machines.json`); cặp baseline/full luôn cùng khởi tạo; pilot dùng để khoá cấu hình train trên L4 và không thuộc 18 run; pilot trượt tiêu chí "đỉnh sau epoch 2"; việc khoá diễn ra sau khi đã nhìn val fold 2 (chứa subject test của fold 1/3); aug được chọn 13/11, sau lần mở test thăm dò 29/10.
 - **Dòng (b) refit (chủ dự án chốt 23/11):** train lại mỗi run (a) đã xong trên **đủ 18 subject** outer-train (fit + inner val), cùng code và cấu hình đã khoá; lịch cosine 20 epoch giữ nguyên và dừng sau epoch E mà run (a) chọn trên inner val; model là `last.pt`; trọng số lớp của L_wa tính lại trên 18 subject. Code: `Contrastive_V1/refit/` (ngoài file bị hash), chạy bằng cell K (Colab) hoặc `pc/train_18_run.py refit`; kết quả ở `runs_refit1/`. Chỉ dòng (b) đặt cạnh 63.0; dòng (a) vẫn là kết quả chính.
 - Khi theo dõi loss, đọc các cột thô `global_con`/`node_con`/`cross_con` trong `history.json`. Không đọc `total`, vì cột này có nhân hệ số ramp.
 
@@ -168,6 +175,7 @@ Quy tắc cho mọi cell:
        - 18 run refit: mỗi run dừng ở epoch E đã chọn, khoảng 10–20 phút/run.
        - Colab không train nữa. Việc của Colab: nhập zip (cell I), kiểm đủ khoá (cell H), cell D chỉ val (evaluate val rồi Tầng 2), sau đó là cell mở test (chưa viết).
        - `stage2_decoder.run_all` tự cất kết quả decode làm từ checkpoint khác (ví dụ của pilot) sang `stage2_v2/stale/` rồi decode lại.
+     - **26/11:** máy 5090 tạm dừng; Colab train tiếp bằng `notebooks/Train_Colab.ipynb`. Trước lần chạy đầu: đổi tên `runs_aug1` (bản Colab cũ) thành `runs_aug1_colab`, đưa 4 zip của 5090 vào `upload/` để cell I nhận.
      - **Kết quả tổng thể = chỉ val (chủ dự án chốt 23/11).** Dùng `notebooks/Tong_hop_val.ipynb`: Setup, rồi cell I, rồi cell L (evaluate val, Tầng 2, bảng `stage2_decoder.val_overview` ghi vào `stage2_v2/val_overview.json`). Chạy được khi mới có một phần run, và chạy lại khi có thêm. Không mở test. Không dùng Stage 2/3 của SymGraphAU (Q2b vẫn là tuỳ chọn).
 4. ~~Cell E~~ **XONG 21/11**: `stage2_decoder` chạy đúng trên 6 run cũ, chỉ val, mất khoảng 30 giây. Kết quả tóm tắt nằm ở đề cương §6 và không dùng để báo cáo. Trên val, `R0 − C0` chỉ từ +0.0 đến +0.9, trong khi C1 − C0 từ +1.5 đến +10.6.
 5. **Gói EMA + val 4 lần/epoch + LR backbone 0.1×** (code trên `main` từ `586b221`, cờ mặc định tắt): **không có bằng chứng có lợi, đề xuất không đưa vào cấu hình chính.** EMA và LR chưa tách được.

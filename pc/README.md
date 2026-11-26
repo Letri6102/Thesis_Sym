@@ -124,6 +124,25 @@ Lệnh chạy 1 epoch của `baseline` và 1 epoch của `full` (fold 2/seed 0, 
 - **Refit (dòng b):** `train_data_co_san.bat` và `2_train.bat` tự chạy `refit` ngay sau `train`. Lệnh này train lại mỗi run trên đủ 18 subject và dừng ở epoch E mà run đó chọn, cho ra zip `refit1_*.zip`. Chạy tay: `<py> pc/train_18_run.py refit --data <DATA> --seeds 0 1 2`.
 - **Đầu ra:** run nằm ở `pc_runs/runs_aug1/`, log ở `pc_runs/logs/`. Mỗi run xong được nén thành `pc_runs/upload/aug1_<variant>_fold<k>_seed<s>.zip` (khoảng 0,7 GB).
 
+## 6a. Xen kẽ với Colab: bàn giao cả run dở (26/11)
+
+Drive (`MyDrive/Sym`) là bản chính. Mỗi lúc chỉ một nơi train một run.
+
+- **Colab → máy 5090** (khi máy 5090 rảnh):
+  1. Trên Colab (`notebooks/Train_Colab.ipynb`): dừng cell G2, chạy cell M. Cell tạo trong `MyDrive/Sym/handoff/`: `partial_aug1_*.zip` (run dở, khoảng 0,7 GB mỗi file) và `stubs_*.zip` (bản tóm tắt run đã xong).
+  2. Tải các file đó về máy cá nhân, chép bằng UltraViewer vào `D:\LVTS_TriLe\nhan`.
+  3. Chạy `train_data_co_san.bat`: file tự nhận (`receive`) rồi train tiếp. Run dở của Colab được resume; run Colab đã xong được bỏ qua.
+- **Máy 5090 → Colab** (khi cần trả máy):
+  1. Đóng cửa sổ train, chạy `pc\windows\ban_giao.bat`. File nén run dở thành `partial_aug1_*.zip` và đánh dấu đã bàn giao; zip run xong đã nằm sẵn trong `pc_runs\upload`.
+  2. Chép mọi file trong `pc_runs\upload` về máy cá nhân, kéo vào `MyDrive/Sym/upload/`.
+  3. Trên Colab chạy cell I rồi cell G2.
+- **Quy tắc tự động:**
+  - Bản nhận chỉ thay bản đang có khi là phần nối tiếp (cùng hash khởi tạo, lịch sử cũ là phần đầu). Lệch nhánh thì không nhập, zip vào `rejected/`, gửi Claude.
+  - Run đã bàn giao không được train tiếp ở nơi gửi, trừ khi chạy với `--reclaim` (Colab: `RECLAIM = True`) khi chắc chắn nơi kia chưa train tiếp run đó.
+  - Run mới chỉ được tạo khi run cùng cặp (nếu đã có) có cùng hash khởi tạo với máy này. Không khớp thì run đó để lại cho máy kia.
+  - Máy train từng đoạn epoch được ghi ở `machines.json` trong run.
+- **Chạy song song cho nhanh:** chia theo seed. Ví dụ Colab giữ seed đang làm (`SEEDS` trong cell G2), máy 5090 nhận các seed còn lại (sửa dòng `set "SEEDS=..."` trong `train_data_co_san.bat` khi file **không** chạy). Cuối cùng gom zip của máy 5090 về Drive bằng cell I.
+
 ## 6b. Xem tiến độ: % hoàn thành và giờ xong dự kiến
 
 - **Bấm là xem:** nháy đúp `D:\LVTS_TriLe\Thesis_Sym\pc\windows\theo_doi.bat`. Cửa sổ làm mới mỗi 60 giây, chỉ đọc, đóng lúc nào cũng được; không ảnh hưởng train đang chạy.
