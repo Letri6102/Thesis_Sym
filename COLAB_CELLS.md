@@ -656,6 +656,8 @@ Chủ dự án đổi 26/11: Colab và máy 5090 **train xen kẽ**, bàn giao c
 
 ```python
 # ==== Cell G2: train bộ 18 run trên Colab bằng đúng runner của máy 5090 (26/11). Drive là bản chính. KHÔNG đụng test ====
+if not os.path.isdir('/content/drive/MyDrive'):            # cell I/M tháo Drive ở cuối: mount lại
+    drive.mount('/content/drive')
 assert str(DATA).startswith('/content/'), 'Ảnh chưa nằm trong /content: chạy Setup với IMAGES = True'
 shutil.copytree(SPLITS, DATA / 'splits_v2', dirs_exist_ok=True)       # runner đọc manifest ở <DATA>/splits_v2 (có kiểm hash khoá)
 SEEDS, FOLDS = [0, 1, 2], [1, 2, 3]
@@ -681,6 +683,8 @@ Tải các file đó về máy cá nhân, chép vào `D:\LVTS_TriLe\nhan` trên 
 
 ```python
 # ==== Cell M: bàn giao cho máy 5090 — zip run dở (partial_...) + bản tóm tắt run đã xong (stubs_...) vào MyDrive/Sym/handoff ====
+if not os.path.isdir('/content/drive/MyDrive'):            # cell I/M tháo Drive ở cuối: mount lại
+    drive.mount('/content/drive')
 # Dừng cell G2 trước. Run dở được đánh dấu HANDED_OFF trên Drive: Colab không train tiếp cho tới khi nhận bản mới về (cell I).
 STOPPED_HERE = False             # True: vừa tự dừng cell G2 trong phiên này, không cần chờ 15 phút
 sys.path.insert(0, str(REPO / 'pc'))
