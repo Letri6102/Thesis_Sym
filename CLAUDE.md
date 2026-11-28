@@ -69,6 +69,7 @@ stage2_v2/                   Tầng 2 chuẩn (stage2_decoder): rules/fold{k}/, 
 contrast_ci/summary.json     CI full − baseline trên test (stage2_decoder/contrast_ci.py) — chỉ tạo một lần, khi mở test
 stage2_out/                  Tầng 2 bản notebook 13/11 trên detector cũ — chỉ là thăm dò
 stage2_smoke_retry1/         cell E: chạy thử stage2_decoder trên runs_retry1 + splits cũ, CHỈ VAL — kiểm module, không báo cáo
+diagnostics/                 cell N: <variant>/fold{k}/seed{s}/{calibration,identity_probe,grad_norms}.json + summary.json — CHỈ fit/val, mô tả
 upload/                      zip run train trên máy riêng chờ cell I nhập; đã xử lý → upload/done|duplicate|rejected/
 failed_runs/, logs/, reports/
 Contrastive_V1/checkpoints/resnet50-19c8e357.pth   trọng số ImageNet
@@ -79,6 +80,8 @@ Contrastive_V1/checkpoints/resnet50-19c8e357.pth   trọng số ImageNet
 ```text
 Contrastive_V1/              Tầng 1 (train_contrastive.py là entry point) + stage2_decoder/ (Tầng 2 chuẩn, test: tests/test_stage2.py)
 Contrastive_V1/refit/        dòng (b) refit: gọi train_contrastive đã khoá với manifest gộp fit + val (test: tests/test_refit.py)
+Contrastive_V1/diagnostics/  chẩn đoán CHỈ fit/val (cell N): AUC + ngưỡng theo subject val, probe danh tính, chuẩn gradient (test: tests/test_diagnostics.py)
+Huong_SOTA_Contrastive.md    nhận xét pipeline + đề xuất Contrastive V2 (SA-Con), 28/11
 Contrastive_V1/remote_stage2/ script cho máy remote (runs_retry1, splits cũ) — LỖI THỜI, trái quy tắc chỉ chạy Colab
 MultiviewSymAU-master/       bản cài đặt lại SymGraphAU (Stage 2/3 cũ) để đối chiếu
 Tang2_Decoder.ipynb          Tầng 2 bản notebook 13/11 — LỖI THỜI, lệch đề cương; dùng stage2_decoder

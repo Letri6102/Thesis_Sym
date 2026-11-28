@@ -71,7 +71,8 @@ def test_one_file_notebook_matches_colab_cells():
     nb = json.loads((repo / "notebooks" / "Tong_hop_val.ipynb").read_text(encoding="utf-8"))
     code = ["".join(c["source"]) for c in nb["cells"] if c["cell_type"] == "code"]
     md = (repo / "COLAB_CELLS.md").read_text(encoding="utf-8")
-    assert len(code) == 3 and "IMAGES   = True" in code[0]
+    assert len(code) == 4 and "IMAGES   = True" in code[0]
     assert code[1].startswith("# ==== Cell I:") and code[1] in md
     assert code[2].startswith("# ==== Cell L:") and code[2] in md
     assert "--val-only" in code[2] and "stage2_decoder.val_overview" in code[2]
+    assert code[3].startswith("# ==== Cell N:") and code[3] in md and "diagnostics.run_all" in code[3]

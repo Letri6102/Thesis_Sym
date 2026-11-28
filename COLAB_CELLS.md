@@ -874,6 +874,31 @@ drive.flush_and_unmount()
 
 ---
 
+## N. Chẩn đoán contrastive — CHỈ fit/val (GPU, chạy sau cell L, Setup với `IMAGES = True`)
+
+Có trong [notebooks/Tong_hop_val.ipynb](notebooks/Tong_hop_val.ipynb), ngay sau cell L. Module `diagnostics/` (ngoài danh sách file bị hash) đo ba thứ cho mỗi run đã có `evaluation_val/` ([Huong_SOTA_Contrastive.md](Huong_SOTA_Contrastive.md) §5.3):
+- `calibration.json`: AUC theo AU; SD của ngưỡng tối ưu giữa 3 subject val; F1(t*) − F1(0.5). Chỉ đọc `val_predictions.npz`.
+- `identity_probe.json`: lớp tuyến tính đoán subject từ đặc trưng đóng băng của `best.pt`, trên frame **fit** (lấy mỗi 4 frame; 70% đầu train probe, 30% cuối đo). Càng gần mức ngẫu nhiên thì đặc trưng càng ít mang danh tính.
+- `grad_norms.json`: chuẩn gradient của từng số hạng loss trên 20 batch fit, cho `best.pt` và `last.pt`; tỉ số ‖∇contrastive‖ / ‖∇L_wa‖ và cos giữa hai gradient trên backbone. Dùng để kiểm giả thuyết "về cuối train, phần contrastive lái backbone".
+
+Không train, không đụng test. Checkpoint được chép về `/content/diag_ckpt` (có timeout) rồi mới nạp, xong thì xoá. Kết quả ở `MyDrive/Sym/diagnostics/<variant>/fold{k}/seed{s}/`, bảng ở `diagnostics/summary.json`. Chạy lại an toàn: phần đã có được bỏ qua, trừ khi `best.pt` đã đổi. Ước lượng 2–4 phút mỗi run, chưa đo; phần lớn là chép checkpoint từ Drive.
+Đây là số mô tả trên fit/val: không báo cáo thay cho F1, không so với 63.0.
+
+```python
+# ==== Cell N: CHẨN ĐOÁN — hiệu chỉnh theo subject val, probe danh tính, chuẩn gradient. CHỈ fit/val, không đụng test ====
+if not os.path.isdir('/content/drive/MyDrive'):            # cell L tháo Drive ở cuối
+    drive.mount('/content/drive')
+assert str(DATA).startswith('/content/'), 'probe danh tính và chuẩn gradient cần ảnh trong /content: chạy Setup với IMAGES = True'
+assert RUNS.name == 'runs_aug1', f'RUNS phải là runs_aug1, đang là {RUNS}'
+DIAG = SYM / 'diagnostics'
+run_logged([sys.executable, '-u', '-m', 'diagnostics.run_all', '--runs', RUNS, '--splits', SPLITS,
+            '--data-root', DATA, '--output', DIAG, '--stage-dir', '/content/diag_ckpt'], 'chan_doan')
+print('Bảng đã ghi vào', DIAG / 'summary.json', flush=True)
+drive.flush_and_unmount()
+```
+
+---
+
 ## Phụ lục
 
 **Kéo log và kết quả về máy để phân tích** (bỏ ảnh, nhãn gốc, trọng số):
